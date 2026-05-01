@@ -25,6 +25,7 @@ declare const _default: {
             };
             fontFamily: {
                 sans: [string, string, string, string];
+                mono: [string, string, string, string];
             };
             boxShadow: {
                 soft: string;

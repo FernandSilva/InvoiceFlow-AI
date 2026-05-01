@@ -24,7 +24,8 @@ export default {
                 rose: "#b91c1c"
             },
             fontFamily: {
-                sans: ["'Manrope'", "ui-sans-serif", "system-ui", "sans-serif"]
+                sans: ["'Inter'", "ui-sans-serif", "system-ui", "sans-serif"],
+                mono: ["'JetBrains Mono'", "ui-monospace", "SFMono-Regular", "monospace"]
             },
             boxShadow: {
                 soft: "0 20px 60px rgba(15, 23, 42, 0.08)",

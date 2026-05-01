@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,6 +11,7 @@
 
 body {
   min-height: 100vh;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
   background:
     radial-gradient(circle at top left, rgba(37, 99, 235, 0.06), transparent 28%),
     linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
@@ -37,5 +40,9 @@ body {
 
   .input-base {
     @apply w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100;
+  }
+
+  .glass {
+    @apply border border-white/20 bg-white/70 backdrop-blur-md;
   }
 }
