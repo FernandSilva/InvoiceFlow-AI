@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { appLogger } from "../lib/logger";
 import { platformService } from "../lib/services";
 import { useAuth } from "./AuthContext";
 import { useImpersonation } from "./ImpersonationContext";
@@ -24,6 +25,7 @@ interface DocumentsContextValue {
   documents: DocumentRecord[];
   loading: boolean;
   stage: ProcessingStage;
+  processingError?: string;
   selectedDetail?: DocumentDetail;
   refreshDocuments: () => Promise<void>;
   uploadAndProcess: (params: {
@@ -47,19 +49,29 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
   const [selectedDetail, setSelectedDetail] = useState<DocumentDetail>();
   const [loading, setLoading] = useState(true);
   const [stage, setStage] = useState<ProcessingStage>("idle");
+  const [processingError, setProcessingError] = useState("");
 
   const refreshDocuments = useCallback(async () => {
     const activeProfile = resolveActiveProfile(profile, targetProfile);
     if (!activeProfile) {
+      appLogger.warn("DocumentsContext", "refreshDocuments skipped because there is no active profile.");
       setDocuments([]);
       setLoading(false);
       return;
     }
 
+    appLogger.info("DocumentsContext", "Refreshing documents.", {
+      userId: activeProfile.userId,
+      role: activeProfile.role,
+      impersonating: Boolean(targetProfile),
+    });
     setLoading(true);
     try {
       const nextDocuments = await platformService.listDocuments(activeProfile);
       setDocuments(nextDocuments);
+      appLogger.info("DocumentsContext", "Documents refreshed.", {
+        count: nextDocuments.length,
+      });
     } finally {
       setLoading(false);
     }
@@ -81,49 +93,87 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
     }) => {
       const activeProfile = resolveActiveProfile(profile, targetProfile);
       if (!activeProfile) {
+        appLogger.warn("DocumentsContext", "uploadAndProcess aborted because there is no active profile.");
         return undefined;
       }
 
+      appLogger.info("DocumentsContext", "Starting upload and processing flow.", {
+        fileName: file.name,
+        fileSize: file.size,
+        workflowType,
+        outputFormat,
+        userId: activeProfile.userId,
+      });
+      setProcessingError("");
       setStage("uploading");
-      const document = await platformService.createDocument({
-        profile: activeProfile,
-        file,
-        workflowType,
-        outputFormat,
-      });
-      await refreshDocuments();
+      try {
+        const document = await platformService.createDocument({
+          profile: activeProfile,
+          file,
+          workflowType,
+          outputFormat,
+        });
+        await refreshDocuments();
 
-      setStage("processing");
-      setStage("extracting");
-      setStage("generating");
-      const result = await platformService.processDocument({
-        documentId: document.id,
-        workflowType,
-        outputFormat,
-        profile: activeProfile,
-      });
+        setStage("processing");
+        setStage("extracting");
+        setStage("generating");
+        const result = await platformService.processDocument({
+          documentId: document.id,
+          workflowType,
+          outputFormat,
+          profile: activeProfile,
+        });
 
-      setStage(result.stage);
-      await refreshDocuments();
-      const detail = await platformService.getDocumentDetail(document.id);
-      setSelectedDetail(detail);
-      return detail;
+        setStage(result.stage);
+        await refreshDocuments();
+        const detail = await platformService.getDocumentDetail(document.id);
+        setSelectedDetail(detail);
+        appLogger.info("DocumentsContext", "Upload and processing flow completed.", {
+          documentId: document.id,
+          finalStage: result.stage,
+          hasDetail: Boolean(detail),
+        });
+        return detail;
+      } catch (error) {
+        setStage("failed");
+        setProcessingError(error instanceof Error ? error.message : "Document processing failed.");
+        appLogger.error("DocumentsContext", "Upload and processing flow failed.", {
+          fileName: file.name,
+          workflowType,
+          outputFormat,
+          error: error instanceof Error ? error.message : "unknown",
+        });
+        await refreshDocuments();
+        return undefined;
+      }
     },
     [profile, refreshDocuments, targetProfile],
   );
 
   const getDocumentDetail = useCallback(async (documentId: string) => {
+    appLogger.info("DocumentsContext", "Loading document detail.", { documentId });
     const detail = await platformService.getDocumentDetail(documentId);
     setSelectedDetail(detail);
+    appLogger.info("DocumentsContext", "Document detail loaded.", {
+      documentId,
+      hasDetail: Boolean(detail),
+      hasExtractedData: Boolean(detail?.extractedData),
+    });
     return detail;
   }, []);
 
   const updateExtractedData = useCallback(async (extractedDataId: string, updates: Partial<ExtractedData>) => {
+    appLogger.info("DocumentsContext", "Updating extracted data from context.", {
+      extractedDataId,
+      updatedKeys: Object.keys(updates),
+    });
     await platformService.updateExtractedData(extractedDataId, updates);
   }, []);
 
   const deleteDocument = useCallback(
     async (documentId: string) => {
+      appLogger.info("DocumentsContext", "Deleting document from context.", { documentId });
       await platformService.deleteDocument(documentId);
       await refreshDocuments();
     },
@@ -135,6 +185,7 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
       documents,
       loading,
       stage,
+      processingError,
       selectedDetail,
       refreshDocuments,
       uploadAndProcess,
@@ -142,7 +193,7 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
       updateExtractedData,
       deleteDocument,
     }),
-    [deleteDocument, documents, getDocumentDetail, loading, refreshDocuments, selectedDetail, stage, updateExtractedData, uploadAndProcess],
+    [deleteDocument, documents, getDocumentDetail, loading, processingError, refreshDocuments, selectedDetail, stage, updateExtractedData, uploadAndProcess],
   );
 
   return <DocumentsContext.Provider value={value}>{children}</DocumentsContext.Provider>;

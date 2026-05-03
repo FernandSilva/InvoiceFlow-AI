@@ -1,21 +1,23 @@
 import { useMemo, useState } from "react";
+import { ErrorState } from "../components/ErrorState";
 import { EInvoiceChecklist } from "../components/invoice/EInvoiceChecklist";
 import { ExtractedInvoicePreview } from "../components/invoice/ExtractedInvoicePreview";
 import { StatusBadge } from "../components/StatusBadge";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { useDocuments } from "../context/DocumentsContext";
 import { OUTPUT_FORMAT_OPTIONS } from "../lib/constants";
+import { appLogger } from "../lib/logger";
 import type { OutputFormat } from "../types";
 
 export const EInvoiceCreatorPage = () => {
-  const { uploadAndProcess, stage, selectedDetail, updateExtractedData } = useDocuments();
+  const { uploadAndProcess, stage, processingError, selectedDetail, updateExtractedData } = useDocuments();
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("xml");
   const selectedOutput = useMemo(() => selectedDetail?.outputs[0], [selectedDetail]);
 
   return (
     <div className="space-y-8">
       <div className="panel p-8">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-950">E-Invoice Creator</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
@@ -27,7 +29,14 @@ export const EInvoiceCreatorPage = () => {
         <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_0.7fr]">
           <UploadDropzone
             helperText="Upload the source invoice or supporting business document, then review the normalized data and readiness checklist."
-            onFileSelected={(file) => void uploadAndProcess({ file, workflowType: "e_invoice_creator", outputFormat })}
+            onFileSelected={(file) => {
+              appLogger.info("EInvoiceCreatorPage", "File selected for upload.", {
+                fileName: file.name,
+                fileSize: file.size,
+                outputFormat,
+              });
+              void uploadAndProcess({ file, workflowType: "e_invoice_creator", outputFormat });
+            }}
           />
           <div className="panel-muted p-5">
             <label className="block">
@@ -46,6 +55,12 @@ export const EInvoiceCreatorPage = () => {
           </div>
         </div>
       </div>
+      {processingError ? (
+        <ErrorState
+          title="Processing failed"
+          description={processingError}
+        />
+      ) : null}
       {selectedDetail?.extractedData ? (
         <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <ExtractedInvoicePreview

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { DocumentTable } from "../components/documents/DocumentTable";
 import { EmptyState } from "../components/EmptyState";
 import { useDocuments } from "../context/DocumentsContext";
+import { appLogger } from "../lib/logger";
 
 const tabs = [
   { id: "all", label: "All Documents" },
@@ -38,7 +39,10 @@ export const DocumentsPage = () => {
             key={item.id}
             type="button"
             className={tab === item.id ? "button-primary px-4 py-2 text-xs" : "button-secondary px-4 py-2 text-xs"}
-            onClick={() => setTab(item.id)}
+            onClick={() => {
+              appLogger.info("DocumentsPage", "Switching documents tab.", { tab: item.id });
+              setTab(item.id);
+            }}
           >
             {item.label}
           </button>

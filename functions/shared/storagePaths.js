@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildTempFilePath = exports.buildOutputFilePath = exports.buildOriginalFilePath = exports.STORAGE_BUCKET_ID = void 0;
+const sanitizeFilename = (filename) => filename.replace(/[^\w.\-]/g, "_");
+exports.STORAGE_BUCKET_ID = "69f4baed0038dc6f98a8";
+const buildOriginalFilePath = (userId, documentId, filename) => `original/${userId}/${documentId}/${sanitizeFilename(filename)}`;
+exports.buildOriginalFilePath = buildOriginalFilePath;
+const buildOutputFilePath = (userId, documentId, filename) => `outputs/${userId}/${documentId}/${sanitizeFilename(filename)}`;
+exports.buildOutputFilePath = buildOutputFilePath;
+const buildTempFilePath = (userId, documentId, filename) => `temp/${userId}/${documentId}/${sanitizeFilename(filename)}`;
+exports.buildTempFilePath = buildTempFilePath;

@@ -1,4 +1,5 @@
 import type { NormalizedInvoiceData, OutputFormat } from "./types";
+import { functionLogger } from "./logger";
 
 const asJsonBuffer = (data: NormalizedInvoiceData) => Buffer.from(JSON.stringify(data, null, 2), "utf-8");
 
@@ -32,6 +33,11 @@ const asPdfPlaceholder = (data: NormalizedInvoiceData) =>
   Buffer.from(`PDF placeholder for ${data.invoiceNumber}\nTODO: Replace with a real PDF generator.`, "utf-8");
 
 export const generateOutputBuffer = (data: NormalizedInvoiceData, outputFormat: OutputFormat) => {
+  functionLogger.info("outputGenerators", "Generating output buffer.", {
+    outputFormat,
+    invoiceNumber: data.invoiceNumber,
+    lineItems: data.lineItems.length,
+  });
   switch (outputFormat) {
     case "json":
       return { extension: "json", mimeType: "application/json", buffer: asJsonBuffer(data) };

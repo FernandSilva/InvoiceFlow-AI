@@ -1,7 +1,6 @@
 import type { OutputFormat, WorkflowType } from "../types";
 
 export const APP_NAME = import.meta.env.VITE_APP_NAME || "InvoiceFlow AI";
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== "false";
 export const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
 export const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "69f37b080009c77bacc1";
 
@@ -17,9 +16,19 @@ export const COLLECTIONS = {
 
 export const STORAGE_BUCKET_ID = "69f4baed0038dc6f98a8";
 
+const processDocumentFunctionId = import.meta.env.VITE_APPWRITE_FUNCTION_PROCESS_DOCUMENT_ID;
+const deleteUserDataFunctionId = import.meta.env.VITE_APPWRITE_FUNCTION_DELETE_USER_DATA_ID;
+
+if (!processDocumentFunctionId || !deleteUserDataFunctionId) {
+  console.error("[InvoiceFlowAI][constants][ERROR] Missing Appwrite function ID environment variable.", {
+    processDocumentFunctionId,
+    deleteUserDataFunctionId,
+  });
+}
+
 export const FUNCTIONS = {
-  PROCESS_DOCUMENT: "processDocument",
-  DELETE_USER_DATA: "deleteUserData",
+  PROCESS_DOCUMENT: processDocumentFunctionId,
+  DELETE_USER_DATA: deleteUserDataFunctionId,
 } as const;
 
 export const OUTPUT_FORMAT_OPTIONS: { value: OutputFormat; label: string }[] = [

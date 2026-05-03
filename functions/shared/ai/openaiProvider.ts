@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { AIProvider } from "./aiProvider";
+import { functionLogger } from "../logger";
 import type { ExtractedInvoiceResult, NormalizedInvoiceData } from "../types";
 
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
@@ -136,6 +137,7 @@ const buildDocumentInput = (fileBuffer: Buffer, fileName: string, mimeType: stri
     return {
       type: "input_image" as const,
       image_url: dataUrl,
+      detail: "auto" as const,
     };
   }
 
@@ -150,11 +152,21 @@ export const openaiProvider: AIProvider = {
   name: "openai",
   async processDocument({ fileName, mimeType, workflowType, outputFormat, fileBuffer }) {
     if (!process.env.OPENAI_API_KEY) {
+      functionLogger.error("openaiProvider", "OPENAI_API_KEY is missing.");
       throw new Error("OPENAI_API_KEY is required when AI_PROVIDER=openai.");
     }
 
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+    functionLogger.info("openaiProvider", "Starting OpenAI extraction.", {
+      model,
+      fileName,
+      mimeType,
+      workflowType,
+      outputFormat,
+      fileSizeBytes: fileBuffer.byteLength,
+      inputType: SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) ? "input_image" : "input_file",
+    });
 
     const response = await client.responses.create({
       model,
@@ -170,7 +182,7 @@ export const openaiProvider: AIProvider = {
               type: "input_text",
               text: `Workflow: ${workflowType}\nRequested output format: ${outputFormat}\nFilename: ${fileName}\nMIME type: ${mimeType}`,
             },
-            buildDocumentInput(fileBuffer, fileName, mimeType),
+            buildDocumentInput(fileBuffer, fileName, mimeType) as any,
           ],
         },
       ],
@@ -183,8 +195,16 @@ export const openaiProvider: AIProvider = {
         },
       },
     });
+    functionLogger.info("openaiProvider", "Received OpenAI response.", {
+      model,
+      responseId: response.id,
+      hasOutputText: Boolean(response.output_text),
+    });
 
     if (!response.output_text) {
+      functionLogger.error("openaiProvider", "OpenAI response did not contain output_text.", {
+        responseId: response.id,
+      });
       throw new Error("OpenAI did not return structured extraction output.");
     }
 
@@ -192,8 +212,21 @@ export const openaiProvider: AIProvider = {
     try {
       parsed = JSON.parse(response.output_text) as ExtractedInvoiceResult;
     } catch {
+      functionLogger.error("openaiProvider", "Failed to parse structured OpenAI response.", {
+        responseId: response.id,
+        outputPreview: response.output_text.slice(0, 500),
+      });
       throw new Error("OpenAI returned an invalid structured response.");
     }
+
+    functionLogger.info("openaiProvider", "Structured extraction parsed successfully.", {
+      invoiceNumber: parsed.invoiceNumber,
+      supplierName: parsed.supplierName,
+      buyerName: parsed.buyerName,
+      lineItems: parsed.lineItems.length,
+      confidenceScore: parsed.confidenceScore,
+      validationIssueCount: parsed.validationIssues.length,
+    });
 
     return normalizeInvoiceResult(parsed);
   },

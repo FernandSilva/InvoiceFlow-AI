@@ -1,5 +1,4 @@
 import type { NormalizedInvoiceData, OutputFormat, WorkflowType } from "../types";
-import { mockProvider } from "./mockProvider";
 import { openaiProvider } from "./openaiProvider";
 import { azurePlaceholderProvider } from "./azureProvider.placeholder";
 import { anthropicPlaceholderProvider } from "./anthropicProvider.placeholder";
@@ -18,7 +17,7 @@ export interface AIProvider {
 }
 
 export const getAIProvider = (): AIProvider => {
-  const provider = process.env.AI_PROVIDER || "mock";
+  const provider = process.env.AI_PROVIDER || "openai";
 
   switch (provider) {
     case "openai":
@@ -30,6 +29,6 @@ export const getAIProvider = (): AIProvider => {
     case "veryfi":
       return veryfiPlaceholderProvider;
     default:
-      return mockProvider;
+      throw new Error(`Unsupported AI provider: ${provider}`);
   }
 };

@@ -8,6 +8,6 @@ export const anthropicPlaceholderProvider: AIProvider = {
     }
 
     // TODO: Implement a real Anthropic-backed extraction workflow.
-    throw new Error("Anthropic provider is not implemented yet. Use AI_PROVIDER=mock for MVP mode.");
+    throw new Error("Anthropic provider is not implemented yet.");
   },
 };

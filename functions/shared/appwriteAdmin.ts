@@ -1,4 +1,5 @@
 import { Client, Databases, Storage, Users } from "node-appwrite";
+import { functionLogger } from "./logger";
 
 export const getBackendConfig = () => {
   const endpoint = process.env.APPWRITE_ENDPOINT;
@@ -22,8 +23,31 @@ export const getBackendConfig = () => {
     !collectionAuditLogs ||
     !collectionUserUsage
   ) {
+    functionLogger.error("appwriteAdmin", "Required backend environment variables are missing.", {
+      endpoint: Boolean(endpoint),
+      projectId: Boolean(projectId),
+      apiKey: Boolean(apiKey),
+      databaseId: Boolean(databaseId),
+      storageBucketId: Boolean(storageBucketId),
+      collectionDocuments: Boolean(collectionDocuments),
+      collectionExtractedData: Boolean(collectionExtractedData),
+      collectionAuditLogs: Boolean(collectionAuditLogs),
+      collectionUserUsage: Boolean(collectionUserUsage),
+    });
     throw new Error("Required Appwrite backend environment variables are missing.");
   }
+
+  functionLogger.debug("appwriteAdmin", "Backend configuration loaded.", {
+    endpoint,
+    projectId,
+    databaseId,
+    storageBucketId,
+    collectionDocuments,
+    collectionExtractedData,
+    collectionAuditLogs,
+    collectionUserUsage,
+    collectionProfiles: process.env.COLLECTION_PROFILES || "profiles",
+  });
 
   return {
     endpoint,
@@ -41,6 +65,7 @@ export const getBackendConfig = () => {
 
 export const getAppwriteAdmin = () => {
   const { endpoint, projectId, apiKey } = getBackendConfig();
+  functionLogger.info("appwriteAdmin", "Creating Appwrite admin client.", { endpoint, projectId });
 
   const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
 

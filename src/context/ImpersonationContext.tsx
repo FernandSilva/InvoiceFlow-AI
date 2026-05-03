@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { appLogger } from "../lib/logger";
 import type { Profile } from "../types";
 
 interface ImpersonationState {
@@ -30,10 +31,17 @@ export const ImpersonationProvider = ({ children }: { children: ReactNode }) => 
   const value = useMemo(
     () => ({
       ...state,
-      startImpersonation: (adminProfile: Profile, targetProfile: Profile) =>
-        setState({ active: true, adminProfile, targetProfile }),
-      stopImpersonation: () =>
-        setState({ active: false, adminProfile: null, targetProfile: null }),
+      startImpersonation: (adminProfile: Profile, targetProfile: Profile) => {
+        appLogger.info("ImpersonationContext", "Starting impersonation.", {
+          adminUserId: adminProfile.userId,
+          targetUserId: targetProfile.userId,
+        });
+        setState({ active: true, adminProfile, targetProfile });
+      },
+      stopImpersonation: () => {
+        appLogger.info("ImpersonationContext", "Stopping impersonation.");
+        setState({ active: false, adminProfile: null, targetProfile: null });
+      },
     }),
     [state],
   );

@@ -50,11 +50,11 @@ export const AdminDashboardPage = () => {
           </div>
         </div>
         <div className="panel p-6">
-          <h2 className="text-xl font-bold text-slate-900">Config placeholders</h2>
+          <h2 className="text-xl font-bold text-slate-900">Platform configuration</h2>
           <div className="mt-5 space-y-3 text-sm text-slate-600">
             <div className="rounded-2xl border border-slate-200 px-4 py-3">AI provider: configurable via Appwrite Function env vars</div>
             <div className="rounded-2xl border border-slate-200 px-4 py-3">Storage bucket: 69f4baed0038dc6f98a8 with logical original, outputs, and temp prefixes</div>
-            <div className="rounded-2xl border border-slate-200 px-4 py-3">Admin impersonation: explicit placeholder strategy only</div>
+            <div className="rounded-2xl border border-slate-200 px-4 py-3">Admin support access: explicit audited simulation banner enabled for MVP</div>
           </div>
         </div>
       </div>

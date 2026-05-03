@@ -8,7 +8,8 @@ Frontend local environment files may use only:
 VITE_APPWRITE_ENDPOINT=https://fra.cloud.appwrite.io/v1
 VITE_APPWRITE_PROJECT_ID=69f37b080009c77bacc1
 VITE_APP_NAME=InvoiceFlow AI
-VITE_USE_MOCKS=false
+VITE_APPWRITE_FUNCTION_PROCESS_DOCUMENT_ID=69f4c09a0006111a3936
+VITE_APPWRITE_FUNCTION_DELETE_USER_DATA_ID=69f4c1230010371d2e12
 ```
 
 Never expose backend secrets in the frontend.
@@ -50,6 +51,7 @@ VERYFI_CLIENT_SECRET=
 
 Notes:
 
-- `AI_PROVIDER=mock` is still supported for local or fallback MVP processing.
+- The frontend calls Appwrite Functions by real Appwrite Function ID, not by friendly function name.
+- If either frontend function ID variable is missing, the app logs `Missing Appwrite function ID environment variable.` and blocks execution before calling Appwrite.
 - If `OPENAI_MODEL` is missing, the backend defaults to `gpt-4.1-mini`.
 - Never place `OPENAI_API_KEY` in any frontend `.env` file.

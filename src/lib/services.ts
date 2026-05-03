@@ -1,33 +1,12 @@
 import { ID, Query } from "appwrite";
 import { getAppwriteServices } from "./appwrite";
-import { COLLECTIONS, DATABASE_ID, FUNCTIONS, STORAGE_BUCKET_ID, USE_MOCKS } from "./constants";
-import {
-  getMockDocumentDetail,
-  mockAdminMetrics,
-  mockExtractedData,
-} from "./mockData";
-import {
-  createClientAuditLog,
-  mockAuditLog,
-  readMockAuditLogs,
-  readMockDocuments,
-  readMockExtractedData,
-  readMockOutputs,
-  readMockProfiles,
-  readMockUsage,
-  saveMockAuditLogs,
-  saveMockDocuments,
-  saveMockExtractedData,
-  saveMockOutputs,
-  saveMockProfiles,
-  saveMockUsage,
-} from "./mockState";
-import { buildOriginalFilePath } from "./storagePaths";
+import { createClientAuditLog } from "./audit";
+import { COLLECTIONS, DATABASE_ID, FUNCTIONS, STORAGE_BUCKET_ID } from "./constants";
+import { appLogger } from "./logger";
 import type {
   AdminMetrics,
   AuditLog,
   DocumentDetail,
-  DocumentStatus,
   DocumentRecord,
   ExtractedData,
   GeneratedOutput,
@@ -117,44 +96,26 @@ const mapAuditLog = (document: any): AuditLog => ({
   createdAt: document.createdAt,
 });
 
-const createMockExtractedData = (documentId: string, userId: string): ExtractedData => {
-  const base = mockExtractedData[0];
-  return {
-    ...base,
-    id: ID.unique(),
-    documentId,
-    userId,
-    invoiceNumber: `INV-${Math.floor(Math.random() * 9000 + 1000)}`,
-    validationIssues: [],
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  };
-};
-
-const createMockOutput = (
-  documentId: string,
-  extractedDataId: string,
-  outputFormat: OutputFormat,
-): GeneratedOutput => ({
-  id: ID.unique(),
-  documentId,
-  extractedDataId,
-  outputFormat,
-  fileName: `invoice-output.${outputFormat === "xlsx" ? "csv" : outputFormat}`,
-  downloadUrl: "#generated-output",
-  createdAt: nowIso(),
-});
-
 const pollDocumentUntilSettled = async (documentId: string, attempts = 12): Promise<DocumentRecord> => {
   const services = getAppwriteServices();
   if (!services) {
+    appLogger.error("services", "Polling requested without Appwrite services.", { documentId });
     throw new Error("Appwrite services are unavailable.");
   }
 
   for (let index = 0; index < attempts; index += 1) {
     const document = await services.databases.getDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId);
     const mapped = mapDocument(document);
+    appLogger.debug("services", "Polling document status.", {
+      documentId,
+      attempt: index + 1,
+      status: mapped.status,
+    });
     if (mapped.status !== "uploaded" && mapped.status !== "processing") {
+      appLogger.info("services", "Document reached settled state.", {
+        documentId,
+        status: mapped.status,
+      });
       return mapped;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
@@ -167,6 +128,9 @@ const pollDocumentUntilSettled = async (documentId: string, attempts = 12): Prom
 const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOutput[]> => {
   const services = getAppwriteServices();
   if (!services) {
+    appLogger.warn("services", "Output metadata requested without Appwrite services.", {
+      documentId: document.id,
+    });
     return [];
   }
 
@@ -174,6 +138,11 @@ const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOut
     document.generatedFileIds.map(async (fileId) => {
       try {
         const file = await services.storage.getFile(STORAGE_BUCKET_ID, fileId);
+        appLogger.debug("services", "Loaded output file metadata.", {
+          documentId: document.id,
+          fileId,
+          fileName: file.name,
+        });
         return {
           id: file.$id,
           documentId: document.id,
@@ -184,6 +153,10 @@ const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOut
           createdAt: file.$createdAt,
         } as GeneratedOutput;
       } catch {
+        appLogger.warn("services", "Unable to load output file metadata.", {
+          documentId: document.id,
+          fileId,
+        });
         return undefined;
       }
     }),
@@ -194,15 +167,13 @@ const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOut
 
 export const platformService = {
   async listProfiles(): Promise<Profile[]> {
-    if (USE_MOCKS) {
-      return readMockProfiles();
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.warn("services", "listProfiles called without Appwrite services.");
       return [];
     }
 
+    appLogger.info("services", "Listing profiles.");
     const response = await services.databases.listDocuments(DATABASE_ID, COLLECTIONS.PROFILES, [
       Query.limit(100),
       Query.orderDesc("$createdAt"),
@@ -210,20 +181,13 @@ export const platformService = {
     return response.documents.map(mapProfile);
   },
   async updateProfile(profileId: string, updates: Partial<Profile>): Promise<Profile> {
-    if (USE_MOCKS) {
-      const profiles = readMockProfiles();
-      const next = profiles.map((profile) =>
-        profile.id === profileId ? { ...profile, ...updates, updatedAt: nowIso() } : profile,
-      );
-      saveMockProfiles(next);
-      return next.find((profile) => profile.id === profileId) as Profile;
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.error("services", "updateProfile called without Appwrite services.", { profileId });
       throw new Error("Appwrite services are unavailable.");
     }
 
+    appLogger.info("services", "Updating profile.", { profileId, updates });
     const document = await services.databases.updateDocument(DATABASE_ID, COLLECTIONS.PROFILES, profileId, {
       ...updates,
       updatedAt: nowIso(),
@@ -231,19 +195,16 @@ export const platformService = {
     return mapProfile(document);
   },
   async listDocuments(profile?: Profile | null): Promise<DocumentRecord[]> {
-    if (USE_MOCKS) {
-      const documents = readMockDocuments();
-      if (!profile || profile.role === "admin") {
-        return documents;
-      }
-      return documents.filter((document) => document.userId === profile.userId);
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.warn("services", "listDocuments called without Appwrite services.");
       return [];
     }
 
+    appLogger.info("services", "Listing documents.", {
+      userId: profile?.userId,
+      role: profile?.role,
+    });
     const queries = [Query.orderDesc("$createdAt"), Query.limit(100)];
     if (profile && profile.role !== "admin") {
       queries.push(Query.equal("userId", profile.userId));
@@ -252,27 +213,27 @@ export const platformService = {
     return response.documents.map(mapDocument);
   },
   async getDocumentDetail(documentId: string): Promise<DocumentDetail | undefined> {
-    if (USE_MOCKS) {
-      return getMockDocumentDetail(documentId);
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.warn("services", "getDocumentDetail called without Appwrite services.", { documentId });
       return undefined;
     }
 
+    appLogger.info("services", "Loading document detail.", { documentId });
     const document = mapDocument(await services.databases.getDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId));
-    const extractedData =
-      document.extractedDataId
-        ? mapExtractedData(
-            await services.databases.getDocument(DATABASE_ID, COLLECTIONS.EXTRACTED_DATA, document.extractedDataId),
-          )
-        : undefined;
-    const logsResponse = await services.databases.listDocuments(DATABASE_ID, COLLECTIONS.AUDIT_LOGS, [
-      Query.equal("entityId", documentId),
-      Query.orderDesc("createdAt"),
-      Query.limit(50),
-    ]);
+    const extractedData = document.extractedDataId
+      ? await services.databases
+          .getDocument(DATABASE_ID, COLLECTIONS.EXTRACTED_DATA, document.extractedDataId)
+          .then(mapExtractedData)
+          .catch(() => undefined)
+      : undefined;
+    const logsResponse = await services.databases
+      .listDocuments(DATABASE_ID, COLLECTIONS.AUDIT_LOGS, [
+        Query.equal("entityId", documentId),
+        Query.orderDesc("createdAt"),
+        Query.limit(50),
+      ])
+      .catch(() => ({ documents: [] as any[] }));
 
     return {
       document,
@@ -287,52 +248,36 @@ export const platformService = {
     workflowType: WorkflowType;
     outputFormat: OutputFormat;
   }): Promise<DocumentRecord> {
-    if (USE_MOCKS) {
-      const documents = readMockDocuments();
-      const document: DocumentRecord = {
-        id: ID.unique(),
-        userId: params.profile.userId,
-        originalFileId: ID.unique(),
-        originalFileName: params.file.name,
-        originalMimeType: params.file.type || "application/octet-stream",
-        originalSize: params.file.size,
-        workflowType: params.workflowType,
-        status: "uploaded",
-        requestedOutputFormat: params.outputFormat,
-        generatedFileIds: [],
-        extractedDataId: "",
-        confidenceScore: 0,
-        complianceStatus: params.workflowType === "e_invoice_creator" ? "draft" : "not_applicable",
-        errorMessage: "",
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-      };
-      documents.unshift(document);
-      saveMockDocuments(documents);
-      mockAuditLog({
-        actorUserId: params.profile.userId,
-        targetUserId: params.profile.userId,
-        action: "document.uploaded",
-        entityType: "document",
-        entityId: document.id,
-        metadata: { workflowType: params.workflowType, outputFormat: params.outputFormat, mock: true },
-      });
-      return document;
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.error("services", "createDocument called without Appwrite services.", {
+        userId: params.profile.userId,
+      });
       throw new Error("Appwrite services are unavailable.");
     }
 
-    const documentId = ID.unique();
-    const wrappedFile = new File(
-      [params.file],
-      buildOriginalFilePath(params.profile.userId, documentId, params.file.name),
-      { type: params.file.type || "application/octet-stream" },
-    );
-    const uploadedFile = await services.storage.createFile(STORAGE_BUCKET_ID, ID.unique(), wrappedFile);
+    console.info("[InvoiceFlowAI] Starting storage.createFile", {
+      bucketId: STORAGE_BUCKET_ID,
+      fileName: params.file.name,
+      fileType: params.file.type || "application/octet-stream",
+      fileSize: params.file.size,
+    });
+    const uploadedFile = await services.storage.createFile(STORAGE_BUCKET_ID, ID.unique(), params.file);
+    console.info("[InvoiceFlowAI] storage.createFile completed", {
+      fileId: uploadedFile.$id,
+      bucketId: STORAGE_BUCKET_ID,
+    });
+
     const now = nowIso();
+    const documentId = ID.unique();
+    console.info("[InvoiceFlowAI] Starting databases.createDocument", {
+      databaseId: DATABASE_ID,
+      collectionId: COLLECTIONS.DOCUMENTS,
+      documentId,
+      workflowType: params.workflowType,
+      outputFormat: params.outputFormat,
+      originalFileId: uploadedFile.$id,
+    });
     const created = await services.databases.createDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId, {
       userId: params.profile.userId,
       originalFileId: uploadedFile.$id,
@@ -349,6 +294,10 @@ export const platformService = {
       errorMessage: "",
       createdAt: now,
       updatedAt: now,
+    });
+    console.info("[InvoiceFlowAI] databases.createDocument completed", {
+      documentId: created.$id,
+      status: created.status,
     });
 
     await createClientAuditLog(services, {
@@ -368,76 +317,26 @@ export const platformService = {
     outputFormat: OutputFormat;
     profile: Profile;
   }): Promise<ProcessingResult> {
-    if (USE_MOCKS) {
-      const documents = readMockDocuments();
-      const extracted = readMockExtractedData();
-      const outputs = readMockOutputs();
-      const auditLogs = readMockAuditLogs();
-      const usage = readMockUsage();
-
-      const documentIndex = documents.findIndex((item) => item.id === params.documentId);
-      const current = documents[documentIndex];
-      const nextStatus: DocumentStatus = params.workflowType === "e_invoice_creator" ? "needs_review" : "completed";
-      const stagedDocument: DocumentRecord = {
-        ...current,
-        status: nextStatus,
-        confidenceScore: params.workflowType === "e_invoice_creator" ? 0.86 : 0.94,
-        complianceStatus: params.workflowType === "e_invoice_creator" ? "needs_review" : "not_applicable",
-        updatedAt: nowIso(),
-      };
-
-      const extractedData = createMockExtractedData(params.documentId, params.profile.userId);
-      if (params.workflowType === "e_invoice_creator") {
-        extractedData.validationIssues = ["Buyer VAT ID should be reviewed before formal e-invoice submission."];
-      }
-
-      const output = createMockOutput(params.documentId, extractedData.id, params.outputFormat);
-      stagedDocument.extractedDataId = extractedData.id;
-      stagedDocument.generatedFileIds = [output.id];
-      documents[documentIndex] = stagedDocument;
-      extracted.unshift(extractedData);
-      outputs.unshift(output);
-      auditLogs.unshift({
-        id: ID.unique(),
-        actorUserId: params.profile.userId,
-        targetUserId: params.profile.userId,
-        action: "document.processed",
-        entityType: "document",
-        entityId: params.documentId,
-        metadata: { workflowType: params.workflowType, outputFormat: params.outputFormat, mock: true },
-        ipAddress: "127.0.0.1",
-        createdAt: nowIso(),
-      });
-      const usageIndex = usage.findIndex((item) => item.userId === params.profile.userId);
-      if (usageIndex >= 0) {
-        usage[usageIndex] = {
-          ...usage[usageIndex],
-          documentsProcessed: usage[usageIndex].documentsProcessed + 1,
-          eInvoicesCreated: usage[usageIndex].eInvoicesCreated + (params.workflowType === "e_invoice_creator" ? 1 : 0),
-          readerConversions: usage[usageIndex].readerConversions + (params.workflowType === "invoice_reader" ? 1 : 0),
-          lastActivityAt: nowIso(),
-        };
-      }
-
-      saveMockDocuments(documents);
-      saveMockExtractedData(extracted);
-      saveMockOutputs(outputs);
-      saveMockAuditLogs(auditLogs);
-      saveMockUsage(usage);
-
-      return {
-        document: stagedDocument,
-        extractedData,
-        outputs: [output],
-        stage: nextStatus === "needs_review" ? "needs_review" : "complete",
-      };
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.error("services", "processDocument called without Appwrite services.", {
+        documentId: params.documentId,
+      });
       throw new Error("Appwrite services are unavailable.");
     }
+    if (!FUNCTIONS.PROCESS_DOCUMENT) {
+      appLogger.error("services", "Missing Appwrite function ID environment variable.", {
+        functionName: "PROCESS_DOCUMENT",
+      });
+      throw new Error("Missing Appwrite function ID environment variable.");
+    }
 
+    console.info("[InvoiceFlowAI] Starting functions.createExecution", {
+      functionId: FUNCTIONS.PROCESS_DOCUMENT,
+      documentId: params.documentId,
+      workflowType: params.workflowType,
+      outputFormat: params.outputFormat,
+    });
     const execution = await services.functions.createExecution(
       FUNCTIONS.PROCESS_DOCUMENT,
       JSON.stringify({
@@ -447,6 +346,25 @@ export const platformService = {
       }),
       false,
     );
+    console.info("[InvoiceFlowAI] functions.createExecution completed", {
+      functionId: FUNCTIONS.PROCESS_DOCUMENT,
+      executionId: execution.$id,
+      status: execution.status,
+      responseStatusCode: execution.responseStatusCode,
+      responseBody: execution.responseBody,
+      errors: execution.errors,
+    });
+
+    if (execution.status === "failed" || execution.responseStatusCode >= 400) {
+      appLogger.error("services", "Function execution failed.", {
+        documentId: params.documentId,
+        executionId: execution.$id,
+        responseStatusCode: execution.responseStatusCode,
+        errors: execution.errors,
+      });
+      const parsed = parseJsonString<{ ok?: boolean; error?: string }>(execution.responseBody, {});
+      throw new Error(parsed.error || execution.errors || "Document processing failed.");
+    }
 
     if (execution.responseBody) {
       const parsed = parseJsonString<{ ok?: boolean; error?: string }>(execution.responseBody, {});
@@ -458,9 +376,18 @@ export const platformService = {
     const document = await pollDocumentUntilSettled(params.documentId);
     const detail = await this.getDocumentDetail(params.documentId);
     if (!detail?.extractedData) {
+      appLogger.error("services", "Processed document is missing extracted data.", {
+        documentId: params.documentId,
+        finalStatus: document.status,
+      });
       throw new Error("Processed document did not return extracted data.");
     }
 
+    appLogger.info("services", "Document processing pipeline completed.", {
+      documentId: params.documentId,
+      finalStatus: document.status,
+      outputCount: detail.outputs.length,
+    });
     return {
       document,
       extractedData: detail.extractedData,
@@ -469,20 +396,18 @@ export const platformService = {
     };
   },
   async updateExtractedData(extractedDataId: string, updates: Partial<ExtractedData>): Promise<ExtractedData> {
-    if (USE_MOCKS) {
-      const items = readMockExtractedData();
-      const next = items.map((item) =>
-        item.id === extractedDataId ? { ...item, ...updates, updatedAt: nowIso() } : item,
-      );
-      saveMockExtractedData(next);
-      return next.find((item) => item.id === extractedDataId) as ExtractedData;
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.error("services", "updateExtractedData called without Appwrite services.", {
+        extractedDataId,
+      });
       throw new Error("Appwrite services are unavailable.");
     }
 
+    appLogger.info("services", "Updating extracted data.", {
+      extractedDataId,
+      updatedKeys: Object.keys(updates),
+    });
     const document = await services.databases.updateDocument(DATABASE_ID, COLLECTIONS.EXTRACTED_DATA, extractedDataId, {
       ...updates,
       lineItems: updates.lineItems ? JSON.stringify(updates.lineItems) : undefined,
@@ -493,27 +418,13 @@ export const platformService = {
     return mapExtractedData(document);
   },
   async deleteDocument(documentId: string): Promise<void> {
-    if (USE_MOCKS) {
-      const document = readMockDocuments().find((item) => item.id === documentId);
-      saveMockDocuments(readMockDocuments().filter((item) => item.id !== documentId));
-      if (document) {
-        mockAuditLog({
-          actorUserId: document.userId,
-          targetUserId: document.userId,
-          action: "document.deleted",
-          entityType: "document",
-          entityId: documentId,
-          metadata: { mock: true },
-        });
-      }
-      return;
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.error("services", "deleteDocument called without Appwrite services.", { documentId });
       throw new Error("Appwrite services are unavailable.");
     }
 
+    appLogger.info("services", "Deleting document.", { documentId });
     const document = mapDocument(await services.databases.getDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId));
     if (document.originalFileId) {
       await services.storage.deleteFile(STORAGE_BUCKET_ID, document.originalFileId).catch(() => undefined);
@@ -534,15 +445,13 @@ export const platformService = {
     }).catch(() => undefined);
   },
   async getAuditLogs(): Promise<AuditLog[]> {
-    if (USE_MOCKS) {
-      return readMockAuditLogs();
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.warn("services", "getAuditLogs called without Appwrite services.");
       return [];
     }
 
+    appLogger.info("services", "Loading audit logs.");
     const response = await services.databases.listDocuments(DATABASE_ID, COLLECTIONS.AUDIT_LOGS, [
       Query.orderDesc("createdAt"),
       Query.limit(100),
@@ -550,15 +459,13 @@ export const platformService = {
     return response.documents.map(mapAuditLog);
   },
   async getUsage(userId: string): Promise<UserUsage | undefined> {
-    if (USE_MOCKS) {
-      return readMockUsage().find((item) => item.userId === userId);
-    }
-
     const services = getAppwriteServices();
     if (!services) {
+      appLogger.warn("services", "getUsage called without Appwrite services.", { userId });
       return undefined;
     }
 
+    appLogger.info("services", "Loading usage record.", { userId });
     const document = await services.databases.getDocument(DATABASE_ID, COLLECTIONS.USER_USAGE, userId);
     return {
       id: document.$id,
@@ -571,10 +478,7 @@ export const platformService = {
     };
   },
   async getAdminMetrics(): Promise<AdminMetrics> {
-    if (USE_MOCKS) {
-      return mockAdminMetrics;
-    }
-
+    appLogger.info("services", "Calculating admin metrics.");
     const [profiles, documents] = await Promise.all([this.listProfiles(), this.listDocuments(null)]);
     const totalConfidence = documents.reduce((sum, item) => sum + item.confidenceScore, 0);
     return {
@@ -587,39 +491,30 @@ export const platformService = {
     };
   },
   async impersonateUser(adminProfile: Profile, targetUserId: string) {
-    const target = USE_MOCKS
-      ? readMockProfiles().find((item) => item.userId === targetUserId)
-      : (await this.listProfiles()).find((item) => item.userId === targetUserId);
+    appLogger.info("services", "Starting impersonation simulation.", {
+      adminUserId: adminProfile.userId,
+      targetUserId,
+    });
+    const target = (await this.listProfiles()).find((item) => item.userId === targetUserId);
 
     if (!target) {
       throw new Error("Target user not found.");
     }
 
-    if (USE_MOCKS) {
-      mockAuditLog({
+    const services = getAppwriteServices();
+    if (services) {
+      await createClientAuditLog(services, {
         actorUserId: adminProfile.userId,
         targetUserId,
         action: "admin.impersonation_started",
         entityType: "profile",
         entityId: target.id,
-        metadata: { strategy: "frontend-placeholder", explicit: true },
-      });
-    } else {
-      const services = getAppwriteServices();
-      if (services) {
-        await createClientAuditLog(services, {
-          actorUserId: adminProfile.userId,
-          targetUserId,
-          action: "admin.impersonation_started",
-          entityType: "profile",
-          entityId: target.id,
-          metadata: {
-            explicit: true,
-            strategy: "frontend-placeholder",
-            note: "TODO: Replace with secure Appwrite-supported admin impersonation flow.",
-          },
-        }).catch(() => undefined);
-      }
+        metadata: {
+          explicit: true,
+          strategy: "frontend-simulation",
+          note: "This MVP uses a visible support simulation banner and audit trail, not a backend auth bypass.",
+        },
+      }).catch(() => undefined);
     }
 
     return target;

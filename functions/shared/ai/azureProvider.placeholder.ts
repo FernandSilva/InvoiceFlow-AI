@@ -9,6 +9,6 @@ export const azurePlaceholderProvider: AIProvider = {
 
     // TODO: Replace with a real Azure Document Intelligence client implementation.
     // Keep credentials inside Appwrite Functions and map raw fields into NormalizedInvoiceData.
-    throw new Error("Azure Document Intelligence provider is not implemented yet. Switch AI_PROVIDER=mock for MVP mode.");
+    throw new Error("Azure Document Intelligence provider is not implemented yet.");
   },
 };

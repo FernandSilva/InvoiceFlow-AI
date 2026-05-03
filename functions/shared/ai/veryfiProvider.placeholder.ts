@@ -8,6 +8,6 @@ export const veryfiPlaceholderProvider: AIProvider = {
     }
 
     // TODO: Implement a real Veryfi extraction workflow.
-    throw new Error("Veryfi provider is not implemented yet. Use AI_PROVIDER=mock for MVP mode.");
+    throw new Error("Veryfi provider is not implemented yet.");
   },
 };

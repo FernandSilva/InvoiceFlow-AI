@@ -1,6 +1,15 @@
 import type { NormalizedInvoiceData, WorkflowType } from "./types";
+import { functionLogger } from "./logger";
 
 export const validateInvoiceData = (data: NormalizedInvoiceData, workflowType: WorkflowType) => {
+  functionLogger.debug("validation", "Validating normalized invoice data.", {
+    workflowType,
+    invoiceNumber: data.invoiceNumber,
+    supplierName: data.supplierName,
+    buyerName: data.buyerName,
+    currency: data.currency,
+    lineItems: data.lineItems.length,
+  });
   const issues: string[] = [];
 
   if (!data.invoiceNumber) issues.push("Invoice number is required.");
@@ -33,5 +42,10 @@ export const validateInvoiceData = (data: NormalizedInvoiceData, workflowType: W
     issues.push("Total does not match line items.");
   }
 
+  functionLogger.info("validation", "Validation completed.", {
+    workflowType,
+    issueCount: issues.length,
+    issues,
+  });
   return issues;
 };

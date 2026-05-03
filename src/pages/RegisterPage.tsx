@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROUTES } from "../lib/constants";
+import { appLogger } from "../lib/logger";
 
 export const RegisterPage = () => {
   const { register } = useAuth();
@@ -42,15 +43,29 @@ export const RegisterPage = () => {
           onSubmit={async (event) => {
             event.preventDefault();
             if (isSubmitting) {
+              appLogger.warn("RegisterPage", "Duplicate registration submission blocked.", {
+                email: form.email,
+              });
               return;
             }
 
             setError("");
             setIsSubmitting(true);
             try {
+              appLogger.info("RegisterPage", "Submitting registration form.", {
+                email: form.email,
+                companyName: form.companyName,
+              });
               await register(form);
               navigate(ROUTES.dashboard);
+              appLogger.info("RegisterPage", "Registration navigation completed.", {
+                destination: ROUTES.dashboard,
+              });
             } catch (registerError) {
+              appLogger.error("RegisterPage", "Registration form submission failed.", {
+                email: form.email,
+                error: registerError instanceof Error ? registerError.message : "unknown",
+              });
               setError(
                 registerError instanceof Error
                   ? registerError.message

@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
+import { ErrorState } from "../components/ErrorState";
 import { ExtractedInvoicePreview } from "../components/invoice/ExtractedInvoicePreview";
 import { StatusBadge } from "../components/StatusBadge";
 import { UploadDropzone } from "../components/UploadDropzone";
 import { useDocuments } from "../context/DocumentsContext";
 import { OUTPUT_FORMAT_OPTIONS } from "../lib/constants";
+import { appLogger } from "../lib/logger";
 import type { OutputFormat } from "../types";
 
 export const InvoiceReaderPage = () => {
-  const { uploadAndProcess, stage, selectedDetail, updateExtractedData } = useDocuments();
+  const { uploadAndProcess, stage, processingError, selectedDetail, updateExtractedData } = useDocuments();
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("json");
   const [notes, setNotes] = useState("");
   const selectedOutput = useMemo(() => selectedDetail?.outputs[0], [selectedDetail]);
@@ -15,7 +17,7 @@ export const InvoiceReaderPage = () => {
   return (
     <div className="space-y-8">
       <div className="panel p-8">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-950">Invoice Reader & Converter</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
@@ -27,7 +29,14 @@ export const InvoiceReaderPage = () => {
         <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_0.7fr]">
           <UploadDropzone
             helperText="Supported MVP inputs include PDF, image/photo, Excel, Word, CSV, XML, and scanned document uploads."
-            onFileSelected={(file) => void uploadAndProcess({ file, workflowType: "invoice_reader", outputFormat })}
+            onFileSelected={(file) => {
+              appLogger.info("InvoiceReaderPage", "File selected for upload.", {
+                fileName: file.name,
+                fileSize: file.size,
+                outputFormat,
+              });
+              void uploadAndProcess({ file, workflowType: "invoice_reader", outputFormat });
+            }}
           />
           <div className="panel-muted p-5">
             <label className="block">
@@ -45,11 +54,17 @@ export const InvoiceReaderPage = () => {
               <textarea className="input-base min-h-32" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional routing notes for a future backend processor." />
             </label>
             <p className="mt-4 text-xs leading-6 text-slate-500">
-              In this MVP, processing uses a mock backend abstraction. Replace the mock provider in the Appwrite function when connecting a live AI or OCR service.
+              Uploaded files are stored in Appwrite, processed by the backend function, and returned as structured outputs for review and export.
             </p>
           </div>
         </div>
       </div>
+      {processingError ? (
+        <ErrorState
+          title="Processing failed"
+          description={processingError}
+        />
+      ) : null}
       {selectedDetail?.extractedData ? (
         <div className="space-y-6">
           <ExtractedInvoicePreview

@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { authApi } from "../lib/auth";
+import { ROUTES } from "../lib/constants";
+import { appLogger } from "../lib/logger";
 import type { AuthUser, Profile } from "../types";
 
 interface AuthContextValue {
@@ -33,23 +35,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    appLogger.info("AuthContext", "Initializing auth session.");
     authApi
       .getCurrentSession()
       .then((session) => {
         if (session) {
+          appLogger.info("AuthContext", "Recovered active session.", {
+            userId: session.user.id,
+            email: session.user.email,
+          });
           setUser(session.user);
           setProfile(session.profile);
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        appLogger.info("AuthContext", "Auth initialization complete.");
+        setLoading(false);
+      });
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    appLogger.info("AuthContext", "Login requested.", { email });
     setLoading(true);
     try {
       const session = await authApi.login(email, password);
       setUser(session.user);
       setProfile(session.profile);
+      appLogger.info("AuthContext", "Login stored in context.", {
+        userId: session.user.id,
+      });
     } finally {
       setLoading(false);
     }
@@ -57,11 +71,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const register = useCallback(
     async (payload: { email: string; password: string; fullName: string; companyName: string }) => {
+      appLogger.info("AuthContext", "Registration requested.", {
+        email: payload.email,
+        companyName: payload.companyName,
+      });
       setLoading(true);
       try {
+        setUser(null);
+        setProfile(null);
         const session = await authApi.register(payload);
         setUser(session.user);
         setProfile(session.profile);
+        appLogger.info("AuthContext", "Registration stored in context.", {
+          userId: session.user.id,
+        });
       } finally {
         setLoading(false);
       }
@@ -70,9 +93,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const logout = useCallback(async () => {
-    await authApi.logout();
-    setUser(null);
-    setProfile(null);
+    appLogger.info("AuthContext", "Logout requested.");
+    try {
+      await authApi.logout();
+    } finally {
+      setUser(null);
+      setProfile(null);
+      appLogger.info("AuthContext", "Context cleared after logout.");
+      window.location.assign(ROUTES.login);
+    }
   }, []);
 
   const value = useMemo(

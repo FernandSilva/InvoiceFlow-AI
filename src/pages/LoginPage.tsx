@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ROUTES } from "../lib/constants";
+import { appLogger } from "../lib/logger";
 
 export const LoginPage = () => {
   const { login } = useAuth();
@@ -39,14 +40,23 @@ export const LoginPage = () => {
           onSubmit={async (event) => {
             event.preventDefault();
             if (isSubmitting) {
+              appLogger.warn("LoginPage", "Duplicate login submission blocked.", { email });
               return;
             }
             setError("");
             setIsSubmitting(true);
             try {
+              appLogger.info("LoginPage", "Submitting login form.", { email });
               await login(email, password);
               navigate(location.state?.from || ROUTES.dashboard);
+              appLogger.info("LoginPage", "Login navigation completed.", {
+                destination: location.state?.from || ROUTES.dashboard,
+              });
             } catch (loginError) {
+              appLogger.error("LoginPage", "Login form submission failed.", {
+                email,
+                error: loginError instanceof Error ? loginError.message : "unknown",
+              });
               setError(loginError instanceof Error ? loginError.message : "Unable to login.");
             } finally {
               setIsSubmitting(false);
