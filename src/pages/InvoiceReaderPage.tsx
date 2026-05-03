@@ -60,10 +60,14 @@ export const InvoiceReaderPage = () => {
         </div>
       </div>
       {processingError ? (
-        <ErrorState
-          title="Processing failed"
-          description={processingError}
-        />
+        stage === "processing" ? (
+          <div className="panel border-brand-200 bg-brand-50 px-6 py-5 text-brand-900">
+            <h3 className="text-lg font-bold">Processing continues in the background</h3>
+            <p className="mt-2 text-sm text-brand-800">{processingError}</p>
+          </div>
+        ) : (
+          <ErrorState title="Processing failed" description={processingError} />
+        )
       ) : null}
       {selectedDetail?.extractedData ? (
         <div className="space-y-6">

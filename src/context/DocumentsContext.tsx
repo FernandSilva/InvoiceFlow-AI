@@ -115,9 +115,8 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
         });
         await refreshDocuments();
 
+        setStage("uploaded");
         setStage("processing");
-        setStage("extracting");
-        setStage("generating");
         const result = await platformService.processDocument({
           documentId: document.id,
           workflowType,
@@ -127,11 +126,20 @@ export const DocumentsProvider = ({ children }: { children: ReactNode }) => {
 
         setStage(result.stage);
         await refreshDocuments();
-        const detail = await platformService.getDocumentDetail(document.id);
+        const detail =
+          result.document.status === "completed" || result.document.status === "needs_review"
+            ? await platformService.getDocumentDetail(document.id)
+            : undefined;
         setSelectedDetail(detail);
+        if (result.timedOut) {
+          setProcessingError("Document is still processing. Check My Documents shortly.");
+        } else if (result.document.status === "failed") {
+          setProcessingError(result.document.errorMessage || "Document processing failed.");
+        }
         appLogger.info("DocumentsContext", "Upload and processing flow completed.", {
           documentId: document.id,
           finalStage: result.stage,
+          timedOut: Boolean(result.timedOut),
           hasDetail: Boolean(detail),
         });
         return detail;

@@ -11,10 +11,12 @@ export type OutputFormat = "xlsx" | "docx" | "pdf" | "json" | "xml";
 export type ComplianceStatus = "not_applicable" | "draft" | "needs_review" | "ready";
 export type ProcessingStage =
   | "idle"
+  | "uploaded"
   | "uploading"
   | "processing"
   | "extracting"
   | "generating"
+  | "completed"
   | "complete"
   | "needs_review"
   | "failed";
@@ -142,10 +144,12 @@ export interface AdminMetrics {
 }
 
 export interface ProcessingResult {
+  executionId: string;
   document: DocumentRecord;
-  extractedData: ExtractedData;
+  extractedData?: ExtractedData;
   outputs: GeneratedOutput[];
   stage: ProcessingStage;
+  timedOut?: boolean;
 }
 
 export interface InvoiceFormData {

@@ -96,7 +96,11 @@ const mapAuditLog = (document: any): AuditLog => ({
   createdAt: document.createdAt,
 });
 
-const pollDocumentUntilSettled = async (documentId: string, attempts = 12): Promise<DocumentRecord> => {
+const pollDocumentUntilSettled = async (
+  documentId: string,
+  attempts = 30,
+  intervalMs = 3000,
+): Promise<{ document: DocumentRecord; timedOut: boolean }> => {
   const services = getAppwriteServices();
   if (!services) {
     appLogger.error("services", "Polling requested without Appwrite services.", { documentId });
@@ -106,7 +110,7 @@ const pollDocumentUntilSettled = async (documentId: string, attempts = 12): Prom
   for (let index = 0; index < attempts; index += 1) {
     const document = await services.databases.getDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId);
     const mapped = mapDocument(document);
-    appLogger.debug("services", "Polling document status.", {
+    appLogger.info("services", "Polling document status", {
       documentId,
       attempt: index + 1,
       status: mapped.status,
@@ -116,13 +120,18 @@ const pollDocumentUntilSettled = async (documentId: string, attempts = 12): Prom
         documentId,
         status: mapped.status,
       });
-      return mapped;
+      return { document: mapped, timedOut: false };
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
   }
 
   const latest = await services.databases.getDocument(DATABASE_ID, COLLECTIONS.DOCUMENTS, documentId);
-  return mapDocument(latest);
+  const mapped = mapDocument(latest);
+  appLogger.warn("services", "Document polling timed out before reaching a settled state.", {
+    documentId,
+    status: mapped.status,
+  });
+  return { document: mapped, timedOut: true };
 };
 
 const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOutput[]> => {
@@ -331,11 +340,12 @@ export const platformService = {
       throw new Error("Missing Appwrite function ID environment variable.");
     }
 
-    console.info("[InvoiceFlowAI] Starting functions.createExecution", {
+    console.info("[InvoiceFlowAI] Starting async functions.createExecution", {
       functionId: FUNCTIONS.PROCESS_DOCUMENT,
       documentId: params.documentId,
       workflowType: params.workflowType,
       outputFormat: params.outputFormat,
+      async: true,
     });
     const execution = await services.functions.createExecution(
       FUNCTIONS.PROCESS_DOCUMENT,
@@ -344,7 +354,7 @@ export const platformService = {
         workflowType: params.workflowType,
         outputFormat: params.outputFormat,
       }),
-      false,
+      true,
     );
     console.info("[InvoiceFlowAI] functions.createExecution completed", {
       functionId: FUNCTIONS.PROCESS_DOCUMENT,
@@ -355,44 +365,63 @@ export const platformService = {
       errors: execution.errors,
     });
 
-    if (execution.status === "failed" || execution.responseStatusCode >= 400) {
+    if (!execution.$id) {
       appLogger.error("services", "Function execution failed.", {
         documentId: params.documentId,
-        executionId: execution.$id,
-        responseStatusCode: execution.responseStatusCode,
-        errors: execution.errors,
+        execution,
       });
-      const parsed = parseJsonString<{ ok?: boolean; error?: string }>(execution.responseBody, {});
-      throw new Error(parsed.error || execution.errors || "Document processing failed.");
+      throw new Error("Failed to start document processing.");
     }
 
-    if (execution.responseBody) {
-      const parsed = parseJsonString<{ ok?: boolean; error?: string }>(execution.responseBody, {});
-      if (parsed.ok === false) {
-        throw new Error(parsed.error || "Document processing failed.");
-      }
-    }
-
-    const document = await pollDocumentUntilSettled(params.documentId);
-    const detail = await this.getDocumentDetail(params.documentId);
-    if (!detail?.extractedData) {
-      appLogger.error("services", "Processed document is missing extracted data.", {
-        documentId: params.documentId,
-        finalStatus: document.status,
-      });
-      throw new Error("Processed document did not return extracted data.");
-    }
-
-    appLogger.info("services", "Document processing pipeline completed.", {
+    appLogger.info("services", "Starting async functions.createExecution", {
       documentId: params.documentId,
-      finalStatus: document.status,
-      outputCount: detail.outputs.length,
+      executionId: execution.$id,
+      functionId: FUNCTIONS.PROCESS_DOCUMENT,
     });
+
+    const { document, timedOut } = await pollDocumentUntilSettled(params.documentId, 30, 3000);
+
+    if (timedOut) {
+      return {
+        executionId: execution.$id,
+        document,
+        outputs: [],
+        stage: "processing",
+        timedOut: true,
+      };
+    }
+
+    const detail = await this.getDocumentDetail(params.documentId);
+
+    if (document.status === "completed") {
+      appLogger.info("services", "Processing completed", {
+        documentId: params.documentId,
+        executionId: execution.$id,
+      });
+    } else if (document.status === "needs_review") {
+      appLogger.warn("services", "Processing needs review", {
+        documentId: params.documentId,
+        executionId: execution.$id,
+      });
+    } else if (document.status === "failed") {
+      appLogger.error("services", "Processing failed", {
+        documentId: params.documentId,
+        executionId: execution.$id,
+        errorMessage: document.errorMessage,
+      });
+    }
+
     return {
+      executionId: execution.$id,
       document,
-      extractedData: detail.extractedData,
-      outputs: detail.outputs,
-      stage: document.status === "needs_review" ? "needs_review" : document.status === "failed" ? "failed" : "complete",
+      extractedData: detail?.extractedData,
+      outputs: detail?.outputs || [],
+      stage:
+        document.status === "needs_review"
+          ? "needs_review"
+          : document.status === "failed"
+            ? "failed"
+            : "completed",
     };
   },
   async updateExtractedData(extractedDataId: string, updates: Partial<ExtractedData>): Promise<ExtractedData> {
