@@ -70,4 +70,19 @@ OPENAI_API_KEY=<secret>
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
+`APPWRITE_API_KEY` must be a manually created Appwrite Project API Key. It is not an Appwrite account password, not a frontend environment variable, and not a browser/session credential.
+
+Required API key scopes for backend processing:
+
+- `databases.read`
+- `databases.write`
+- `collections.read`
+- `documents.read`
+- `documents.write`
+- `storage.read`
+- `storage.write`
+- `files.read`
+- `files.write`
+- `users.read`
+
 `processDocument` keeps all OpenAI access on the backend. The frontend never calls OpenAI directly and never stores an OpenAI key.

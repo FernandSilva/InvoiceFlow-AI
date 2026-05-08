@@ -53,5 +53,17 @@ Notes:
 
 - The frontend calls Appwrite Functions by real Appwrite Function ID, not by friendly function name.
 - If either frontend function ID variable is missing, the app logs `Missing Appwrite function ID environment variable.` and blocks execution before calling Appwrite.
+- `APPWRITE_API_KEY` must be a manually created Appwrite Project API Key with backend scopes. It is not an Appwrite account password, not a frontend variable, and not a user login/session credential.
+- Required backend scopes:
+  - `databases.read`
+  - `databases.write`
+  - `collections.read`
+  - `documents.read`
+  - `documents.write`
+  - `storage.read`
+  - `storage.write`
+  - `files.read`
+  - `files.write`
+  - `users.read`
 - If `OPENAI_MODEL` is missing, the backend defaults to `gpt-4.1-mini`.
 - Never place `OPENAI_API_KEY` in any frontend `.env` file.

@@ -10,6 +10,7 @@ import type { ProcessDocumentPayload } from "../../shared/types";
 
 export default async ({ req, res }: { req: any; res: any }) => {
   const {
+    apiKey,
     databaseId,
     collectionProfiles,
     collectionDocuments,
@@ -20,6 +21,31 @@ export default async ({ req, res }: { req: any; res: any }) => {
     getBackendConfig();
   const admin = getAppwriteAdmin();
   const storageBucketId = process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID;
+  const requiredScopes = [
+    "databases.read",
+    "databases.write",
+    "documents.read",
+    "documents.write",
+    "storage.read",
+    "storage.write",
+    "files.read",
+    "files.write",
+    "users.read",
+  ];
+
+  const isBackendApiKeyUnauthorized = (error: unknown) =>
+    error instanceof AppwriteException &&
+    error.code === 401 &&
+    /user_unauthorized|not authorized|unauthorized/i.test(`${error.type || ""} ${error.message || ""}`);
+
+  const backendApiKeyUnauthorizedResponse = () =>
+    res.json(
+      {
+        error: "Backend API key is not authorized. Check APPWRITE_API_KEY scopes.",
+        requiredScopes,
+      },
+      500,
+    );
 
   const logAppwriteOperationError = (operation: string, error: unknown, meta?: Record<string, unknown>) => {
     if (error instanceof AppwriteException) {
@@ -29,6 +55,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
         code: error.code,
         type: error.type,
         response: error.response,
+        hasApiKey: Boolean(apiKey),
         ...meta,
       });
       return;
@@ -37,6 +64,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
     functionLogger.error("processDocument", `Non-Appwrite operation failed: ${operation}`, {
       operation,
       error: error instanceof Error ? error.message : "Unknown error",
+      hasApiKey: Boolean(apiKey),
       ...meta,
     });
   };
@@ -156,6 +184,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         documentId: payload.documentId,
         actorUserId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
     functionLogger.info("processDocument", "Document fetched", {
@@ -178,6 +209,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         actorUserId,
         documentId: payload.documentId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
     }
     const actorIsAdmin = actorProfile?.role === "admin";
     if (document.userId !== actorUserId && !actorIsAdmin) {
@@ -214,10 +248,16 @@ export default async ({ req, res }: { req: any; res: any }) => {
       logAppwriteOperationError("databases.updateDocument(set-processing)", error, {
         documentId: payload.documentId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
+    functionLogger.info("processDocument", "Document status set to processing", {
+      documentId: payload.documentId,
+    });
 
-    functionLogger.info("processDocument", "Downloading file with admin storage client", {
+    functionLogger.info("processDocument", "Downloading original file", {
       documentId: payload.documentId,
       fileId: document.originalFileId,
       storageBucketId,
@@ -231,6 +271,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         fileId: document.originalFileId,
         storageBucketId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
     const fileBuffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
@@ -242,13 +285,19 @@ export default async ({ req, res }: { req: any; res: any }) => {
     });
 
     const provider = getAIProvider();
-    functionLogger.info("processDocument", "Selected AI provider.", { provider: provider.name });
+    functionLogger.info("processDocument", "Calling AI provider", { provider: provider.name });
     const extracted = await provider.processDocument({
       fileName: document.originalFileName,
       mimeType: document.originalMimeType,
       workflowType: payload.workflowType,
       outputFormat: payload.outputFormat,
       fileBuffer,
+    });
+    functionLogger.info("processDocument", "AI provider completed", {
+      provider: provider.name,
+      documentId: payload.documentId,
+      confidenceScore: extracted.confidenceScore,
+      validationIssueCount: extracted.validationIssues.length,
     });
 
     const extractedValidationIssues = [...extracted.validationIssues];
@@ -312,7 +361,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       validationIssueCount: validationIssues.length,
       validationIssues,
     });
-    functionLogger.info("processDocument", "Creating extracted_data with admin client", {
+    functionLogger.info("processDocument", "Creating extracted_data", {
       documentId: payload.documentId,
       ownerUserId: document.userId,
     });
@@ -356,6 +405,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         documentId: payload.documentId,
         ownerUserId: document.userId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
     functionLogger.info("processDocument", "Created extracted_data record.", {
@@ -369,7 +421,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       payload.documentId,
       `invoice-output.${output.extension}`,
     );
-    functionLogger.info("processDocument", "Creating generated output with admin storage client", {
+    functionLogger.info("processDocument", "Creating output file", {
       documentId: payload.documentId,
       outputPath,
       storageBucketId,
@@ -388,6 +440,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         outputPath,
         storageBucketId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
     functionLogger.info("processDocument", "Created output file.", {
@@ -424,8 +479,15 @@ export default async ({ req, res }: { req: any; res: any }) => {
         documentId: payload.documentId,
         nextStatus,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
+    functionLogger.info("processDocument", "Document status finalized", {
+      documentId: payload.documentId,
+      nextStatus,
+    });
     functionLogger.info("processDocument", "Updated document record after processing.", {
       documentId: payload.documentId,
       nextStatus,
@@ -456,6 +518,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
           documentId: payload.documentId,
           userId: document.userId,
         });
+        if (isBackendApiKeyUnauthorized(error)) {
+          return backendApiKeyUnauthorizedResponse();
+        }
         throw error;
       }
       functionLogger.info("processDocument", "Updated user usage counters.", {
@@ -485,6 +550,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
         documentId: payload.documentId,
         actorUserId,
       });
+      if (isBackendApiKeyUnauthorized(error)) {
+        return backendApiKeyUnauthorizedResponse();
+      }
       throw error;
     }
     functionLogger.info("processDocument", "Created success audit log.", {

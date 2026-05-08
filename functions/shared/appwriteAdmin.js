@@ -62,7 +62,13 @@ const getBackendConfig = () => {
 exports.getBackendConfig = getBackendConfig;
 const getAppwriteAdmin = () => {
     const { endpoint, projectId, apiKey } = (0, exports.getBackendConfig)();
-    logger_1.functionLogger.info("appwriteAdmin", "Creating Appwrite admin client.", { endpoint, projectId });
+    logger_1.functionLogger.info("appwriteAdmin", "Creating Appwrite admin client.", {
+        endpoint,
+        projectId,
+    });
+    logger_1.functionLogger.info("appwriteAdmin", "Admin client configured with API key: true", {
+        hasApiKey: Boolean(apiKey),
+    });
     const client = new node_appwrite_1.Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
     return {
         client,
