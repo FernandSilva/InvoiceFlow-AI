@@ -1,4 +1,4 @@
-import { ID, Permission, Role } from "node-appwrite";
+import { AppwriteException, ID, Permission, Role } from "node-appwrite";
 import { buildAuditEvent } from "../../shared/audit";
 import { getAIProvider } from "../../shared/ai/aiProvider";
 import { getAppwriteAdmin, getBackendConfig } from "../../shared/appwriteAdmin";
@@ -9,9 +9,37 @@ import { validateInvoiceData } from "../../shared/validation";
 import type { ProcessDocumentPayload } from "../../shared/types";
 
 export default async ({ req, res }: { req: any; res: any }) => {
-  const { databaseId, collectionDocuments, collectionExtractedData, collectionAuditLogs, collectionUserUsage } =
+  const {
+    databaseId,
+    collectionProfiles,
+    collectionDocuments,
+    collectionExtractedData,
+    collectionAuditLogs,
+    collectionUserUsage,
+  } =
     getBackendConfig();
   const admin = getAppwriteAdmin();
+  const storageBucketId = process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID;
+
+  const logAppwriteOperationError = (operation: string, error: unknown, meta?: Record<string, unknown>) => {
+    if (error instanceof AppwriteException) {
+      functionLogger.error("processDocument", `Appwrite operation failed: ${operation}`, {
+        operation,
+        message: error.message,
+        code: error.code,
+        type: error.type,
+        response: error.response,
+        ...meta,
+      });
+      return;
+    }
+
+    functionLogger.error("processDocument", `Non-Appwrite operation failed: ${operation}`, {
+      operation,
+      error: error instanceof Error ? error.message : "Unknown error",
+      ...meta,
+    });
+  };
 
   const buildFallbackInvoiceNumber = (documentId: string, isoDate: string) => {
     const year = new Date(isoDate).getUTCFullYear() || new Date().getUTCFullYear();
@@ -88,17 +116,15 @@ export default async ({ req, res }: { req: any; res: any }) => {
 
   try {
     const payload = JSON.parse(req.body || "{}") as ProcessDocumentPayload;
-    const userId = req.headers["x-appwrite-user-id"];
-    const userRole = req.headers["x-appwrite-user-role"] === "admin" ? "admin" : "user";
+    const actorUserId = req.headers["x-appwrite-user-id"];
     const ipAddress = req.headers["x-forwarded-for"] || "unknown";
     functionLogger.info("processDocument", "Function invoked.", {
       payload,
-      userId,
-      userRole,
+      actorUserId,
       ipAddress,
     });
 
-    if (!userId) {
+    if (!actorUserId) {
       functionLogger.warn("processDocument", "Authentication missing for execution.");
       return res.json({ error: "Authentication required." }, 401);
     }
@@ -118,11 +144,50 @@ export default async ({ req, res }: { req: any; res: any }) => {
       return res.json({ ok: false, error: "Invalid outputFormat." }, 400);
     }
 
-    const document = await admin.databases.getDocument(
-      databaseId,
-      collectionDocuments,
-      payload.documentId,
-    );
+    functionLogger.info("processDocument", "Fetching document with admin client", {
+      documentId: payload.documentId,
+      actorUserId,
+    });
+    let document;
+    try {
+      document = await admin.databases.getDocument(databaseId, collectionDocuments, payload.documentId);
+    } catch (error) {
+      logAppwriteOperationError("databases.getDocument(documents)", error, {
+        documentId: payload.documentId,
+        actorUserId,
+      });
+      throw error;
+    }
+    functionLogger.info("processDocument", "Document fetched", {
+      documentId: payload.documentId,
+      ownerUserId: document.userId,
+      originalFileId: document.originalFileId,
+      currentStatus: document.status,
+    });
+
+    functionLogger.info("processDocument", "Checking ownership", {
+      documentId: payload.documentId,
+      actorUserId,
+      ownerUserId: document.userId,
+    });
+    let actorProfile: any = null;
+    try {
+      actorProfile = await admin.databases.getDocument(databaseId, collectionProfiles, actorUserId);
+    } catch (error) {
+      logAppwriteOperationError("databases.getDocument(profiles)", error, {
+        actorUserId,
+        documentId: payload.documentId,
+      });
+    }
+    const actorIsAdmin = actorProfile?.role === "admin";
+    if (document.userId !== actorUserId && !actorIsAdmin) {
+      functionLogger.warn("processDocument", "Ownership check failed.", {
+        actorUserId,
+        ownerUserId: document.userId,
+        actorRole: actorProfile?.role || "unknown",
+      });
+      return res.json({ error: "Forbidden." }, 403);
+    }
     functionLogger.info("processDocument", "Loaded source document record.", {
       documentId: payload.documentId,
       ownerUserId: document.userId,
@@ -130,23 +195,44 @@ export default async ({ req, res }: { req: any; res: any }) => {
       originalFileName: document.originalFileName,
       currentStatus: document.status,
     });
+    functionLogger.info("processDocument", "Ownership authorized", {
+      documentId: payload.documentId,
+      actorUserId,
+      actorRole: actorProfile?.role || "user",
+    });
 
-    if (document.userId !== userId && userRole !== "admin") {
-      functionLogger.warn("processDocument", "Forbidden access to document.", {
-        requestedBy: userId,
-        ownerUserId: document.userId,
+    functionLogger.info("processDocument", "Setting document status to processing", {
+      documentId: payload.documentId,
+    });
+    try {
+      await admin.databases.updateDocument(databaseId, collectionDocuments, payload.documentId, {
+        status: "processing",
+        errorMessage: "",
+        updatedAt: new Date().toISOString(),
       });
-      return res.json({ error: "Forbidden." }, 403);
+    } catch (error) {
+      logAppwriteOperationError("databases.updateDocument(set-processing)", error, {
+        documentId: payload.documentId,
+      });
+      throw error;
     }
 
-    await admin.databases.updateDocument(
-      databaseId,
-      collectionDocuments,
-      payload.documentId,
-      { status: "processing", errorMessage: "", updatedAt: new Date().toISOString() },
-    );
-
-    const file = await admin.storage.getFileDownload(process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID, document.originalFileId);
+    functionLogger.info("processDocument", "Downloading file with admin storage client", {
+      documentId: payload.documentId,
+      fileId: document.originalFileId,
+      storageBucketId,
+    });
+    let file;
+    try {
+      file = await admin.storage.getFileDownload(storageBucketId, document.originalFileId);
+    } catch (error) {
+      logAppwriteOperationError("storage.getFileDownload", error, {
+        documentId: payload.documentId,
+        fileId: document.originalFileId,
+        storageBucketId,
+      });
+      throw error;
+    }
     const fileBuffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
     functionLogger.info("processDocument", "Downloaded source file from storage.", {
       documentId: payload.documentId,
@@ -226,39 +312,52 @@ export default async ({ req, res }: { req: any; res: any }) => {
       validationIssueCount: validationIssues.length,
       validationIssues,
     });
-    const extractedData = await admin.databases.createDocument(
-      databaseId,
-      collectionExtractedData,
-      ID.unique(),
-      {
-        documentId: payload.documentId,
-        userId: document.userId,
-        supplierName: extracted.supplierName,
-        supplierTaxId: extracted.supplierTaxId,
-        supplierAddress: extracted.supplierAddress,
-        buyerName: extracted.buyerName,
-        buyerTaxId: extracted.buyerTaxId,
-        buyerAddress: extracted.buyerAddress,
-        invoiceNumber,
-        invoiceDate: extracted.invoiceDate,
-        dueDate: extracted.dueDate,
-        currency: extracted.currency,
-        subtotal: extracted.subtotal,
-        taxTotal: extracted.taxTotal,
-        total: extracted.total,
-        lineItems: JSON.stringify(extracted.lineItems),
-        rawExtractedJson: JSON.stringify({
-          ...extracted,
+    functionLogger.info("processDocument", "Creating extracted_data with admin client", {
+      documentId: payload.documentId,
+      ownerUserId: document.userId,
+    });
+    let extractedData;
+    try {
+      extractedData = await admin.databases.createDocument(
+        databaseId,
+        collectionExtractedData,
+        ID.unique(),
+        {
+          documentId: payload.documentId,
+          userId: document.userId,
+          supplierName: extracted.supplierName,
+          supplierTaxId: extracted.supplierTaxId,
+          supplierAddress: extracted.supplierAddress,
+          buyerName: extracted.buyerName,
+          buyerTaxId: extracted.buyerTaxId,
+          buyerAddress: extracted.buyerAddress,
           invoiceNumber,
+          invoiceDate: extracted.invoiceDate,
+          dueDate: extracted.dueDate,
+          currency: extracted.currency,
+          subtotal: extracted.subtotal,
+          taxTotal: extracted.taxTotal,
+          total: extracted.total,
+          lineItems: JSON.stringify(extracted.lineItems),
+          rawExtractedJson: JSON.stringify({
+            ...extracted,
+            invoiceNumber,
+            validationIssues,
+          }),
+          normalizedJson: JSON.stringify(normalizedInvoice),
           validationIssues,
-        }),
-        normalizedJson: JSON.stringify(normalizedInvoice),
-        validationIssues,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      ownerDocumentPermissions,
-    );
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        ownerDocumentPermissions,
+      );
+    } catch (error) {
+      logAppwriteOperationError("databases.createDocument(extracted_data)", error, {
+        documentId: payload.documentId,
+        ownerUserId: document.userId,
+      });
+      throw error;
+    }
     functionLogger.info("processDocument", "Created extracted_data record.", {
       documentId: payload.documentId,
       extractedDataId: extractedData.$id,
@@ -270,12 +369,27 @@ export default async ({ req, res }: { req: any; res: any }) => {
       payload.documentId,
       `invoice-output.${output.extension}`,
     );
-    const outputFile = await admin.storage.createFile(
-      process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID,
-      ID.unique(),
-      new File([output.buffer], outputPath, { type: output.mimeType }),
-      ownerFilePermissions,
-    );
+    functionLogger.info("processDocument", "Creating generated output with admin storage client", {
+      documentId: payload.documentId,
+      outputPath,
+      storageBucketId,
+    });
+    let outputFile;
+    try {
+      outputFile = await admin.storage.createFile(
+        storageBucketId,
+        ID.unique(),
+        new File([output.buffer], outputPath, { type: output.mimeType }),
+        ownerFilePermissions,
+      );
+    } catch (error) {
+      logAppwriteOperationError("storage.createFile(output)", error, {
+        documentId: payload.documentId,
+        outputPath,
+        storageBucketId,
+      });
+      throw error;
+    }
     functionLogger.info("processDocument", "Created output file.", {
       documentId: payload.documentId,
       outputFileId: outputFile.$id,
@@ -286,11 +400,12 @@ export default async ({ req, res }: { req: any; res: any }) => {
     const needsReview = validationIssues.length > 0 || extracted.confidenceScore < 0.75;
     const nextStatus = needsReview ? "needs_review" : "completed";
 
-    await admin.databases.updateDocument(
-      databaseId,
-      collectionDocuments,
-      payload.documentId,
-      {
+    functionLogger.info("processDocument", "Updating final document status", {
+      documentId: payload.documentId,
+      nextStatus,
+    });
+    try {
+      await admin.databases.updateDocument(databaseId, collectionDocuments, payload.documentId, {
         status: nextStatus,
         generatedFileIds: [...(Array.isArray(document.generatedFileIds) ? document.generatedFileIds : []), outputFile.$id],
         extractedDataId: extractedData.$id,
@@ -303,8 +418,14 @@ export default async ({ req, res }: { req: any; res: any }) => {
             : "not_applicable",
         errorMessage: validationIssues.length ? validationIssues.join(" | ") : "",
         updatedAt: new Date().toISOString(),
-      },
-    );
+      });
+    } catch (error) {
+      logAppwriteOperationError("databases.updateDocument(final-status)", error, {
+        documentId: payload.documentId,
+        nextStatus,
+      });
+      throw error;
+    }
     functionLogger.info("processDocument", "Updated document record after processing.", {
       documentId: payload.documentId,
       nextStatus,
@@ -320,39 +441,55 @@ export default async ({ req, res }: { req: any; res: any }) => {
 
     const usage = await admin.databases.getDocument(databaseId, collectionUserUsage, document.userId).catch(() => null);
     if (usage) {
-      await admin.databases.updateDocument(databaseId, collectionUserUsage, document.userId, {
-        documentsProcessed: Number(usage.documentsProcessed || 0) + 1,
-        eInvoicesCreated:
-          Number(usage.eInvoicesCreated || 0) + (payload.workflowType === "e_invoice_creator" ? 1 : 0),
-        readerConversions:
-          Number(usage.readerConversions || 0) + (payload.workflowType === "invoice_reader" ? 1 : 0),
-        failedJobs: Number(usage.failedJobs || 0),
-        lastActivityAt: new Date().toISOString(),
-      });
+      try {
+        await admin.databases.updateDocument(databaseId, collectionUserUsage, document.userId, {
+          documentsProcessed: Number(usage.documentsProcessed || 0) + 1,
+          eInvoicesCreated:
+            Number(usage.eInvoicesCreated || 0) + (payload.workflowType === "e_invoice_creator" ? 1 : 0),
+          readerConversions:
+            Number(usage.readerConversions || 0) + (payload.workflowType === "invoice_reader" ? 1 : 0),
+          failedJobs: Number(usage.failedJobs || 0),
+          lastActivityAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        logAppwriteOperationError("databases.updateDocument(user_usage)", error, {
+          documentId: payload.documentId,
+          userId: document.userId,
+        });
+        throw error;
+      }
       functionLogger.info("processDocument", "Updated user usage counters.", {
         userId: document.userId,
         documentsProcessed: Number(usage.documentsProcessed || 0) + 1,
       });
     }
 
-    await admin.databases.createDocument(
-      databaseId,
-      collectionAuditLogs,
-      ID.unique(),
-      buildAuditEvent({
-        actorUserId: userId,
-        targetUserId: document.userId,
-        action: "document.processed",
-        entityType: "document",
-        entityId: payload.documentId,
-        metadata: { workflowType: payload.workflowType, outputFormat: payload.outputFormat, provider: provider.name },
-        ipAddress,
-      }),
-      ownerDocumentPermissions,
-    );
+    try {
+      await admin.databases.createDocument(
+        databaseId,
+        collectionAuditLogs,
+        ID.unique(),
+        buildAuditEvent({
+          actorUserId,
+          targetUserId: document.userId,
+          action: "document.processed",
+          entityType: "document",
+          entityId: payload.documentId,
+          metadata: { workflowType: payload.workflowType, outputFormat: payload.outputFormat, provider: provider.name },
+          ipAddress,
+        }),
+        ownerDocumentPermissions,
+      );
+    } catch (error) {
+      logAppwriteOperationError("databases.createDocument(audit_logs)", error, {
+        documentId: payload.documentId,
+        actorUserId,
+      });
+      throw error;
+    }
     functionLogger.info("processDocument", "Created success audit log.", {
       documentId: payload.documentId,
-      actorUserId: userId,
+      actorUserId,
       provider: provider.name,
     });
 
@@ -365,14 +502,17 @@ export default async ({ req, res }: { req: any; res: any }) => {
       validationIssues,
     });
   } catch (error) {
-    functionLogger.error("processDocument", "Unhandled processing error.", {
-      error: error instanceof Error ? error.message : "Unknown processing error.",
-    });
+    logAppwriteOperationError("processDocument.catch", error);
     const payload = JSON.parse(req.body || "{}") as Partial<ProcessDocumentPayload>;
     const userId = req.headers["x-appwrite-user-id"] || "unknown";
     const ipAddress = req.headers["x-forwarded-for"] || "unknown";
     if (payload.documentId) {
-      const document = await admin.databases.getDocument(databaseId, collectionDocuments, payload.documentId).catch(() => null);
+      const document = await admin.databases.getDocument(databaseId, collectionDocuments, payload.documentId).catch((lookupError) => {
+        logAppwriteOperationError("databases.getDocument(catch-lookup)", lookupError, {
+          documentId: payload.documentId,
+        });
+        return null;
+      });
       await failProcessing({
         documentId: payload.documentId,
         actorUserId: userId,
