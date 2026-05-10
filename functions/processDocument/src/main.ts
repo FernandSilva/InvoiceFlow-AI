@@ -371,39 +371,42 @@ export default async ({ req, res }: { req: any; res: any }) => {
       documentId: payload.documentId,
       ownerUserId: document.userId,
     });
+    const extractedDataPayload = {
+      documentId: payload.documentId,
+      userId: document.userId,
+      supplierName: extracted.supplierName,
+      supplierTaxId: extracted.supplierTaxId,
+      supplierAddress: extracted.supplierAddress,
+      buyerName: extracted.buyerName,
+      buyerTaxId: extracted.buyerTaxId,
+      buyerAddress: extracted.buyerAddress,
+      invoiceNumber,
+      invoiceDate: extracted.invoiceDate,
+      dueDate: extracted.dueDate,
+      currency: extracted.currency,
+      subtotal: extracted.subtotal,
+      taxTotal: extracted.taxTotal,
+      total: extracted.total,
+      lineItems: JSON.stringify(extracted.lineItems),
+      rawExtractedJson: JSON.stringify({
+        ...extracted,
+        invoiceNumber,
+        validationIssues,
+      }),
+      normalizedJson: JSON.stringify(normalizedInvoice),
+      validationIssues,
+    };
+    functionLogger.info("processDocument", "extracted_data payload keys", {
+      documentId: payload.documentId,
+      keys: Object.keys(extractedDataPayload),
+    });
     let extractedData;
     try {
       extractedData = await admin.databases.createDocument(
         databaseId,
         collectionExtractedData,
         ID.unique(),
-        {
-          documentId: payload.documentId,
-          userId: document.userId,
-          supplierName: extracted.supplierName,
-          supplierTaxId: extracted.supplierTaxId,
-          supplierAddress: extracted.supplierAddress,
-          buyerName: extracted.buyerName,
-          buyerTaxId: extracted.buyerTaxId,
-          buyerAddress: extracted.buyerAddress,
-          invoiceNumber,
-          invoiceDate: extracted.invoiceDate,
-          dueDate: extracted.dueDate,
-          currency: extracted.currency,
-          subtotal: extracted.subtotal,
-          taxTotal: extracted.taxTotal,
-          total: extracted.total,
-          lineItems: JSON.stringify(extracted.lineItems),
-          rawExtractedJson: JSON.stringify({
-            ...extracted,
-            invoiceNumber,
-            validationIssues,
-          }),
-          normalizedJson: JSON.stringify(normalizedInvoice),
-          validationIssues,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+        extractedDataPayload,
         ownerDocumentPermissions,
       );
     } catch (error) {

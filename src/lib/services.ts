@@ -80,8 +80,8 @@ const mapExtractedData = (document: any): ExtractedData => ({
   rawExtractedJson: parseJsonString(document.rawExtractedJson, {}),
   normalizedJson: parseJsonString(document.normalizedJson, {}),
   validationIssues: Array.isArray(document.validationIssues) ? document.validationIssues : [],
-  createdAt: document.createdAt,
-  updatedAt: document.updatedAt,
+  createdAt: document.createdAt || document.$createdAt,
+  updatedAt: document.updatedAt || document.$updatedAt,
 });
 
 const mapAuditLog = (document: any): AuditLog => ({
