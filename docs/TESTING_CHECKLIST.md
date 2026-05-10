@@ -16,19 +16,25 @@
 
 ## OpenAI Extraction Test
 
-1. In Appwrite Function variables, set `AI_PROVIDER=openai`
-2. Set `OPENAI_API_KEY` to a valid backend secret
-3. Optionally set `OPENAI_MODEL=gpt-4.1-mini`
-4. Confirm frontend env includes `VITE_APPWRITE_FUNCTION_PROCESS_DOCUMENT_ID=69f4c09a0006111a3936`
-5. Upload one PDF invoice through Invoice Reader
-6. Confirm the original file is stored in `69f4baed0038dc6f98a8`
-7. Confirm the function execution appears in Appwrite under Function ID `69f4c09a0006111a3936`
-8. Confirm `processDocument` creates an `extracted_data` record with populated supplier, buyer, totals, and line items
-9. Confirm a generated output file is stored with the `outputs/{userId}/{documentId}/...` naming pattern
-10. Confirm the `documents` record stores `confidenceScore`
-11. Confirm the document moves to `needs_review` if confidence is below `0.75` or validation issues exist
-12. Upload one photographed invoice image and repeat the same checks
-13. Confirm failures write `document.processing_failed` audit logs and populate `documents.errorMessage`
+1. Confirm `APPWRITE_API_KEY` is a Project API Key, not an Appwrite account password
+2. Confirm it is saved in `processDocument` environment variables as `APPWRITE_API_KEY`
+3. Confirm it is marked Secret
+4. Confirm it includes `rows.read` and `rows.write`
+5. Confirm it includes `files.read` and `files.write`
+6. Redeploy `processDocument` after changing function variables
+7. In Appwrite Function variables, set `AI_PROVIDER=openai`
+8. Set `OPENAI_API_KEY` to a valid backend secret
+9. Optionally set `OPENAI_MODEL=gpt-4.1-mini`
+10. Confirm frontend env includes `VITE_APPWRITE_FUNCTION_PROCESS_DOCUMENT_ID=69f4c09a0006111a3936`
+11. Upload one PDF invoice through Invoice Reader
+12. Confirm the original file is stored in `69f4baed0038dc6f98a8`
+13. Confirm the function execution appears in Appwrite under Function ID `69f4c09a0006111a3936`
+14. Confirm `processDocument` creates an `extracted_data` record with populated supplier, buyer, totals, and line items
+15. Confirm a generated output file is stored with the `outputs/{userId}/{documentId}/...` naming pattern
+16. Confirm the `documents` record stores `confidenceScore`
+17. Confirm the document moves to `needs_review` if confidence is below `0.75` or validation issues exist
+18. Upload one photographed invoice image and repeat the same checks
+19. Confirm failures write `document.processing_failed` audit logs and populate `documents.errorMessage`
 
 ## E-Invoice Creator Fallback Number Test
 

@@ -22,15 +22,20 @@ export default async ({ req, res }: { req: any; res: any }) => {
   const admin = getAppwriteAdmin();
   const storageBucketId = process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID;
   const requiredScopes = [
+    "users.read",
     "databases.read",
     "databases.write",
-    "documents.read",
-    "documents.write",
-    "storage.read",
-    "storage.write",
+    "tables.read",
+    "columns.read",
+    "indexes.read",
+    "rows.read",
+    "rows.write",
+    "buckets.read",
     "files.read",
     "files.write",
-    "users.read",
+    "collections.read",
+    "documents.read",
+    "documents.write",
   ];
 
   const isBackendApiKeyUnauthorized = (error: unknown) =>
@@ -41,7 +46,8 @@ export default async ({ req, res }: { req: any; res: any }) => {
   const backendApiKeyUnauthorizedResponse = () =>
     res.json(
       {
-        error: "Backend API key is not authorized. Check APPWRITE_API_KEY scopes.",
+        error:
+          "Backend API key is present but not authorized. Check that APPWRITE_API_KEY is a Project API Key with databases.read, rows.read, rows.write, files.read, and files.write scopes. In Appwrite 1.9+, rows.* scopes may be required even when using SDK document APIs.",
         requiredScopes,
       },
       500,
