@@ -229,7 +229,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       originalFileName: document.originalFileName,
       currentStatus: document.status,
     });
-    functionLogger.info("processDocument", "Ownership authorized", {
+    functionLogger.info("processDocument", "Ownership check passed", {
       documentId: payload.documentId,
       actorUserId,
       actorRole: actorProfile?.role || "user",
