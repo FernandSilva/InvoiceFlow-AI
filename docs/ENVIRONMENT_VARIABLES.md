@@ -41,7 +41,7 @@ COLLECTION_USER_USAGE=user_usage
 COLLECTION_PROFILES=profiles
 AI_PROVIDER=openai
 OPENAI_API_KEY=<secret>
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-4.1-nano
 AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=
 AZURE_DOCUMENT_INTELLIGENCE_KEY=
 ANTHROPIC_API_KEY=
@@ -76,5 +76,6 @@ Notes:
   - Functions, optional for debugging:
     - `executions.read`
     - `executions.write`
-- If `OPENAI_MODEL` is missing, the backend defaults to `gpt-4.1-mini`.
+- If `OPENAI_MODEL` is missing, the backend defaults to `gpt-4.1-nano`.
+- For this MVP, the recommended model is `OPENAI_MODEL=gpt-4.1-nano`.
 - Never place `OPENAI_API_KEY` in any frontend `.env` file.

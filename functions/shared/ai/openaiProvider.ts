@@ -3,7 +3,9 @@ import type { AIProvider } from "./aiProvider";
 import { functionLogger } from "../logger";
 import type { ExtractedInvoiceResult, NormalizedInvoiceData } from "../types";
 
-const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-nano";
+const OPENAI_TIMEOUT_MS = 20_000;
+const MAX_MVP_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
@@ -73,18 +75,12 @@ const extractionSchema = {
   additionalProperties: false,
 } as const;
 
-const systemInstructions = `You are an invoice extraction engine for a SaaS app called InvoiceFlow AI.
-Extract invoice data from the provided document.
-Return only data that is visible or strongly inferable from the document.
-Do not invent supplier, buyer, tax, invoice number, or totals.
-If a value is missing, return an empty string for string fields, 0 for number fields, and add a validation issue.
-Dates should be returned as ISO-style YYYY-MM-DD where possible.
-Currency should be ISO currency code where possible, e.g. EUR, GBP, USD.
-Line items must preserve item descriptions, quantities, unit prices, tax rates, and totals where visible.
-For e_invoice_creator workflow, focus on producing clean normalized invoice data suitable for later XML/e-invoice generation.
-For invoice_reader workflow, focus on accurate extraction and conversion.
-Return confidenceScore between 0 and 1.
-Return validationIssues for missing or inconsistent data.`;
+const systemInstructions = `Extract invoice fields from the document.
+Only return visible or strongly inferable values.
+Use empty strings or 0 when missing.
+Return dates as YYYY-MM-DD where possible.
+Return currency as ISO code where possible.
+Do not invent invoice data.`;
 
 const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoiceData => {
   const lineItems = result.lineItems.map((item) => {
@@ -156,9 +152,22 @@ export const openaiProvider: AIProvider = {
       throw new Error("OPENAI_API_KEY is required when AI_PROVIDER=openai.");
     }
 
+    if (fileBuffer.byteLength > MAX_MVP_FILE_SIZE_BYTES) {
+      functionLogger.warn("openaiProvider", "File exceeded MVP processing limit.", {
+        fileName,
+        fileSizeBytes: fileBuffer.byteLength,
+        maxFileSizeBytes: MAX_MVP_FILE_SIZE_BYTES,
+      });
+      throw new Error("File too large for MVP processing. Please upload a smaller invoice.");
+    }
+
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
-    functionLogger.info("openaiProvider", "Starting OpenAI extraction.", {
+    const startedAt = Date.now();
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(), OPENAI_TIMEOUT_MS);
+
+    functionLogger.info("openaiProvider", "OpenAI request started", {
       model,
       fileName,
       mimeType,
@@ -167,38 +176,68 @@ export const openaiProvider: AIProvider = {
       fileSizeBytes: fileBuffer.byteLength,
       inputType: SUPPORTED_IMAGE_MIME_TYPES.has(mimeType) ? "input_image" : "input_file",
     });
-
-    const response = await client.responses.create({
-      model,
-      input: [
+    let response;
+    try {
+      response = await client.responses.create(
         {
-          role: "system",
-          content: [{ type: "input_text", text: systemInstructions }],
-        },
-        {
-          role: "user",
-          content: [
+          model,
+          input: [
             {
-              type: "input_text",
-              text: `Workflow: ${workflowType}\nRequested output format: ${outputFormat}\nFilename: ${fileName}\nMIME type: ${mimeType}`,
+              role: "system",
+              content: [{ type: "input_text", text: systemInstructions }],
             },
-            buildDocumentInput(fileBuffer, fileName, mimeType) as any,
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: `Workflow: ${workflowType}\nOutput: ${outputFormat}\nFilename: ${fileName}\nMIME type: ${mimeType}`,
+                },
+                buildDocumentInput(fileBuffer, fileName, mimeType) as any,
+              ],
+            },
           ],
+          max_output_tokens: 700,
+          text: {
+            format: {
+              type: "json_schema",
+              name: "extracted_invoice_result",
+              strict: true,
+              schema: extractionSchema,
+            },
+          },
         },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "extracted_invoice_result",
-          strict: true,
-          schema: extractionSchema,
+        {
+          signal: abortController.signal,
         },
-      },
-    });
-    functionLogger.info("openaiProvider", "Received OpenAI response.", {
+      );
+    } catch (error) {
+      const elapsedMs = Date.now() - startedAt;
+      if ((error as Error)?.name === "AbortError") {
+        functionLogger.error("openaiProvider", "OpenAI request timed out", {
+          model,
+          fileName,
+          elapsedMs,
+          timeoutMs: OPENAI_TIMEOUT_MS,
+        });
+        throw new Error("OpenAI extraction timed out. Try a smaller file or use mock mode.");
+      }
+
+      functionLogger.error("openaiProvider", "OpenAI request failed", {
+        model,
+        fileName,
+        elapsedMs,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw error;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+    functionLogger.info("openaiProvider", "OpenAI request completed", {
       model,
       responseId: response.id,
       hasOutputText: Boolean(response.output_text),
+      elapsedMs: Date.now() - startedAt,
     });
 
     if (!response.output_text) {

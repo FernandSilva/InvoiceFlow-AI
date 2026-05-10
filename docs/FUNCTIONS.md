@@ -67,7 +67,7 @@ COLLECTION_DOCUMENTS=documents
 COLLECTION_AUDIT_LOGS=audit_logs
 AI_PROVIDER=openai
 OPENAI_API_KEY=<secret>
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-4.1-nano
 ```
 
 `APPWRITE_API_KEY` must be a manually created Appwrite Project API Key. It is not an Appwrite account password, not a frontend environment variable, and not a browser/session credential.
@@ -97,3 +97,7 @@ Required Appwrite Project API Key scopes for `processDocument`:
   - `executions.write`
 
 `processDocument` keeps all OpenAI access on the backend. The frontend never calls OpenAI directly and never stores an OpenAI key.
+
+For this MVP, the recommended model is:
+
+- `OPENAI_MODEL=gpt-4.1-nano`
