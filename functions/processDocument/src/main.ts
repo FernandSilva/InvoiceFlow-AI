@@ -21,6 +21,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
     getBackendConfig();
   const admin = getAppwriteAdmin();
   const storageBucketId = process.env.STORAGE_BUCKET_ID || STORAGE_BUCKET_ID;
+  const STORAGE_DOWNLOAD_TIMEOUT_MS = 10_000;
   const requiredScopes = [
     "users.read",
     "databases.read",
@@ -79,6 +80,34 @@ export default async ({ req, res }: { req: any; res: any }) => {
     const year = new Date(isoDate).getUTCFullYear() || new Date().getUTCFullYear();
     const shortDocumentId = documentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "DOC001";
     return `INV-${year}-${shortDocumentId}`;
+  };
+
+  const normalizeDownloadToBuffer = async (downloadResult: unknown): Promise<Buffer> => {
+    if (Buffer.isBuffer(downloadResult)) {
+      return downloadResult;
+    }
+
+    if (downloadResult instanceof ArrayBuffer) {
+      return Buffer.from(downloadResult);
+    }
+
+    if (ArrayBuffer.isView(downloadResult)) {
+      return Buffer.from(downloadResult.buffer, downloadResult.byteOffset, downloadResult.byteLength);
+    }
+
+    if (
+      downloadResult &&
+      typeof downloadResult === "object" &&
+      "arrayBuffer" in downloadResult &&
+      typeof (downloadResult as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer === "function"
+    ) {
+      const arrayBuffer = await (downloadResult as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    }
+
+    throw new Error(
+      `Unsupported storage download result type: ${typeof downloadResult} (${(downloadResult as { constructor?: { name?: string } })?.constructor?.name || "unknown"})`,
+    );
   };
 
   const failProcessing = async ({
@@ -263,31 +292,58 @@ export default async ({ req, res }: { req: any; res: any }) => {
       documentId: payload.documentId,
     });
 
-    functionLogger.info("processDocument", "Downloading original file", {
+    functionLogger.info("processDocument", "Storage download started", {
       documentId: payload.documentId,
       fileId: document.originalFileId,
       storageBucketId,
     });
+    const downloadStartedAt = Date.now();
     let file;
     try {
-      file = await admin.storage.getFileDownload(storageBucketId, document.originalFileId);
+      file = await Promise.race([
+        admin.storage.getFileDownload(storageBucketId, document.originalFileId),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Storage download timed out")), STORAGE_DOWNLOAD_TIMEOUT_MS);
+        }),
+      ]);
     } catch (error) {
       logAppwriteOperationError("storage.getFileDownload", error, {
         documentId: payload.documentId,
         fileId: document.originalFileId,
         storageBucketId,
+        elapsedMs: Date.now() - downloadStartedAt,
       });
       if (isBackendApiKeyUnauthorized(error)) {
         return backendApiKeyUnauthorizedResponse();
       }
-      throw error;
+      throw new Error(`Storage download failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
-    const fileBuffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
-    functionLogger.info("processDocument", "Downloaded source file from storage.", {
+    functionLogger.info("processDocument", "Storage download raw result received", {
+      documentId: payload.documentId,
+      fileId: document.originalFileId,
+      elapsedMs: Date.now() - downloadStartedAt,
+      resultType: typeof file,
+      constructorName: (file as { constructor?: { name?: string } })?.constructor?.name || "unknown",
+    });
+
+    let fileBuffer;
+    try {
+      fileBuffer = await normalizeDownloadToBuffer(file);
+    } catch (error) {
+      logAppwriteOperationError("normalizeDownloadToBuffer", error, {
+        documentId: payload.documentId,
+        fileId: document.originalFileId,
+        storageBucketId,
+        elapsedMs: Date.now() - downloadStartedAt,
+      });
+      throw new Error(`Storage download failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+    functionLogger.info("processDocument", "Storage download normalized to buffer", {
       documentId: payload.documentId,
       originalFileId: document.originalFileId,
       bytes: fileBuffer.byteLength,
       mimeType: document.originalMimeType,
+      elapsedMs: Date.now() - downloadStartedAt,
     });
 
     const provider = getAIProvider();

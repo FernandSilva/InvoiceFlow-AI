@@ -82,6 +82,26 @@ Return dates as YYYY-MM-DD where possible.
 Return currency as ISO code where possible.
 Do not invent invoice data.`;
 
+const clampConfidenceScore = (value: number) => {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, value));
+};
+
+const hasRequiredInvoiceFields = (result: ExtractedInvoiceResult) =>
+  Boolean(
+    result.supplierName &&
+      result.buyerName &&
+      result.invoiceNumber &&
+      result.invoiceDate &&
+      result.currency &&
+      Number(result.subtotal) > 0 &&
+      Number(result.taxTotal) >= 0 &&
+      Number(result.total) > 0 &&
+      result.lineItems.length > 0,
+  );
+
 const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoiceData => {
   const lineItems = result.lineItems.map((item) => {
     const quantity = Number(item.quantity || 0);
@@ -102,6 +122,26 @@ const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoi
     };
   });
 
+  const originalConfidenceScore = Number(result.confidenceScore);
+  const hasValidationIssues = result.validationIssues.length > 0;
+  const shouldAutoRaiseConfidence =
+    (!Number.isFinite(originalConfidenceScore) || originalConfidenceScore === 0) &&
+    hasRequiredInvoiceFields(result) &&
+    !hasValidationIssues;
+
+  let normalizedConfidenceScore = shouldAutoRaiseConfidence ? 0.9 : clampConfidenceScore(Number(result.confidenceScore || 0));
+
+  if (hasValidationIssues) {
+    normalizedConfidenceScore = Math.min(normalizedConfidenceScore, 0.74);
+  }
+
+  functionLogger.info("openaiProvider", "Normalized confidence score", {
+    originalConfidenceScore: Number.isFinite(originalConfidenceScore) ? originalConfidenceScore : null,
+    normalizedConfidenceScore,
+    hasValidationIssues,
+    requiredFieldsPresent: hasRequiredInvoiceFields(result),
+  });
+
   return {
     supplierName: result.supplierName,
     supplierTaxId: result.supplierTaxId,
@@ -120,7 +160,7 @@ const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoi
     rawExtractedJson: result as unknown as Record<string, unknown>,
     normalizedJson: {},
     validationIssues: result.validationIssues,
-    confidenceScore: Number(result.confidenceScore || 0),
+    confidenceScore: normalizedConfidenceScore,
     rawNotes: result.rawNotes,
   };
 };
