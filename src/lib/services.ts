@@ -40,6 +40,29 @@ function parseJsonArray(value: unknown): string[] {
   return [];
 }
 
+const parseLineItems = (value: unknown): ExtractedData["lineItems"] => {
+  const parsed = typeof value === "string" ? parseJsonString<any[]>(value, []) : Array.isArray(value) ? value : [];
+
+  return parsed.map((item, index) => {
+    const quantity = Number(item.quantity || 0);
+    const unitPrice = Number(item.unitPrice || 0);
+    const totalAmount = Number(item.totalAmount ?? item.total ?? quantity * unitPrice);
+    const netAmount = Number(item.netAmount ?? quantity * unitPrice);
+    const taxAmount = Number(item.taxAmount ?? totalAmount - netAmount);
+
+    return {
+      id: item.id || `${item.description || "line-item"}-${index}`,
+      description: item.description || "",
+      quantity,
+      unitPrice,
+      taxRate: Number(item.taxRate || 0),
+      netAmount,
+      taxAmount,
+      totalAmount,
+    };
+  });
+};
+
 const mapProfile = (document: any): Profile => ({
   id: document.$id,
   userId: document.userId,
@@ -89,7 +112,7 @@ const mapExtractedData = (document: any): ExtractedData => ({
   subtotal: Number(document.subtotal),
   taxTotal: Number(document.taxTotal),
   total: Number(document.total),
-  lineItems: parseJsonString(document.lineItems, []),
+  lineItems: parseLineItems(document.lineItems),
   rawExtractedJson: parseJsonString(document.rawExtractedJson, {}),
   normalizedJson: parseJsonString(document.normalizedJson, {}),
   validationIssues: parseJsonArray(document.validationIssues),
@@ -170,7 +193,7 @@ const getOutputMetadata = async (document: DocumentRecord): Promise<GeneratedOut
           documentId: document.id,
           extractedDataId: document.extractedDataId || "",
           outputFormat: document.requestedOutputFormat,
-          fileName: file.name,
+          fileName: file.name.split("/").pop() || file.name,
           downloadUrl: services.storage.getFileDownload(STORAGE_BUCKET_ID, file.$id),
           createdAt: file.$createdAt,
         } as GeneratedOutput;

@@ -1,4 +1,4 @@
-import type { NormalizedInvoiceData, OutputFormat, WorkflowType } from "../types";
+import type { ExtractedInvoiceData, OutputFormat, WorkflowType } from "../types";
 import { openaiProvider } from "./openaiProvider";
 import { azurePlaceholderProvider } from "./azureProvider.placeholder";
 import { anthropicPlaceholderProvider } from "./anthropicProvider.placeholder";
@@ -13,7 +13,7 @@ export interface AIProvider {
     outputFormat: OutputFormat;
     fileBuffer: Buffer;
     notes?: string;
-  }): Promise<NormalizedInvoiceData>;
+  }): Promise<ExtractedInvoiceData>;
 }
 
 export const getAIProvider = (): AIProvider => {

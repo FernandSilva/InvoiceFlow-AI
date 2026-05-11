@@ -35,7 +35,7 @@ export interface Profile {
 }
 
 export interface LineItem {
-  id: string;
+  id?: string;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -43,6 +43,44 @@ export interface LineItem {
   netAmount: number;
   taxAmount: number;
   totalAmount: number;
+}
+
+export interface NormalizedInvoice {
+  metadata: {
+    generatedAt: string;
+    sourceDocumentId: string;
+    workflowType: WorkflowType;
+    outputFormat: OutputFormat;
+    confidenceScore: number;
+    validationIssues: string[];
+  };
+  supplier: {
+    name: string;
+    taxId: string;
+    address: string;
+  };
+  buyer: {
+    name: string;
+    taxId: string;
+    address: string;
+  };
+  invoice: {
+    invoiceNumber: string;
+    invoiceDate: string;
+    dueDate: string;
+    currency: string;
+    subtotal: number;
+    taxTotal: number;
+    total: number;
+  };
+  lineItems: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    taxRate: number;
+    total: number;
+  }>;
+  notes: string;
 }
 
 export interface ExtractedData {
@@ -64,7 +102,7 @@ export interface ExtractedData {
   total: number;
   lineItems: LineItem[];
   rawExtractedJson: Record<string, unknown>;
-  normalizedJson: Record<string, unknown>;
+  normalizedJson: NormalizedInvoice | Record<string, unknown>;
   validationIssues: string[];
   createdAt: string;
   updatedAt: string;

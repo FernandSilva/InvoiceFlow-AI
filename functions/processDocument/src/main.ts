@@ -2,8 +2,9 @@ import { AppwriteException, ID, Permission, Role } from "node-appwrite";
 import { buildAuditEvent } from "../../shared/audit";
 import { getAIProvider } from "../../shared/ai/aiProvider";
 import { getAppwriteAdmin, getBackendConfig } from "../../shared/appwriteAdmin";
+import { buildCanonicalInvoice } from "../../shared/invoiceNormalizer";
 import { functionLogger } from "../../shared/logger";
-import { generateOutputBuffer } from "../../shared/outputGenerators";
+import { generateOutput } from "../../shared/outputGenerators";
 import { buildOutputFilePath, STORAGE_BUCKET_ID } from "../../shared/storagePaths";
 import { validateInvoiceData } from "../../shared/validation";
 import type { ProcessDocumentPayload } from "../../shared/types";
@@ -366,32 +367,18 @@ export default async ({ req, res }: { req: any; res: any }) => {
       });
     }
 
-    const normalizedInvoice = {
-      supplierName: extracted.supplierName,
-      supplierTaxId: extracted.supplierTaxId,
-      supplierAddress: extracted.supplierAddress,
-      buyerName: extracted.buyerName,
-      buyerTaxId: extracted.buyerTaxId,
-      buyerAddress: extracted.buyerAddress,
-      invoiceNumber,
-      invoiceDate: extracted.invoiceDate,
-      dueDate: extracted.dueDate,
-      currency: extracted.currency,
-      subtotal: extracted.subtotal,
-      taxTotal: extracted.taxTotal,
-      total: extracted.total,
-      lineItems: extracted.lineItems,
-      workflowType: payload.workflowType,
-      outputFormat: payload.outputFormat,
-      confidenceScore: extracted.confidenceScore,
-      rawNotes: extracted.rawNotes,
-    };
-
-    const normalizedForValidation = {
+    const normalizedExtraction = {
       ...extracted,
       invoiceNumber,
       validationIssues: extractedValidationIssues,
     };
+
+    const canonicalInvoice = buildCanonicalInvoice({
+      extracted: normalizedExtraction,
+      documentId: payload.documentId,
+      workflowType: payload.workflowType,
+      outputFormat: payload.outputFormat,
+    });
 
     const ownerDocumentPermissions = [
       Permission.read(Role.user(document.userId)),
@@ -406,12 +393,13 @@ export default async ({ req, res }: { req: any; res: any }) => {
     ];
 
     const validationIssues = [
-      ...new Set([...extractedValidationIssues, ...validateInvoiceData(normalizedForValidation, payload.workflowType)]),
+      ...new Set([...extractedValidationIssues, ...validateInvoiceData(canonicalInvoice, payload.workflowType)]),
     ];
+    canonicalInvoice.metadata.validationIssues = validationIssues;
     functionLogger.info("processDocument", "Normalized extraction prepared.", {
       documentId: payload.documentId,
       invoiceNumber,
-      confidenceScore: extracted.confidenceScore,
+      confidenceScore: canonicalInvoice.metadata.confidenceScore,
       validationIssueCount: validationIssues.length,
       validationIssues,
     });
@@ -435,13 +423,9 @@ export default async ({ req, res }: { req: any; res: any }) => {
       subtotal: extracted.subtotal,
       taxTotal: extracted.taxTotal,
       total: extracted.total,
-      lineItems: JSON.stringify(extracted.lineItems),
-      rawExtractedJson: JSON.stringify({
-        ...extracted,
-        invoiceNumber,
-        validationIssues,
-      }),
-      normalizedJson: JSON.stringify(normalizedInvoice),
+      lineItems: JSON.stringify(normalizedExtraction.lineItems),
+      rawExtractedJson: JSON.stringify(normalizedExtraction.rawExtractedJson || normalizedExtraction),
+      normalizedJson: JSON.stringify(canonicalInvoice),
       validationIssues: JSON.stringify(validationIssues || []),
     };
     functionLogger.info("processDocument", "extracted_data payload keys", {
@@ -478,11 +462,11 @@ export default async ({ req, res }: { req: any; res: any }) => {
       extractedDataId: extractedData.$id,
     });
 
-    const output = generateOutputBuffer(normalizedForValidation, payload.outputFormat);
+    const output = await generateOutput(canonicalInvoice, payload.outputFormat);
     const outputPath = buildOutputFilePath(
       document.userId,
       payload.documentId,
-      `invoice-output.${output.extension}`,
+      output.filename,
     );
     functionLogger.info("processDocument", "Creating output file", {
       documentId: payload.documentId,
@@ -494,7 +478,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       outputFile = await admin.storage.createFile(
         storageBucketId,
         ID.unique(),
-        new File([output.buffer], outputPath, { type: output.mimeType }),
+        new File([new Uint8Array(output.buffer)], outputPath, { type: output.mimeType }),
         ownerFilePermissions,
       );
     } catch (error) {
@@ -515,7 +499,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       outputFormat: payload.outputFormat,
     });
 
-    const needsReview = validationIssues.length > 0 || extracted.confidenceScore < 0.75;
+    const needsReview = validationIssues.length > 0 || canonicalInvoice.metadata.confidenceScore < 0.75;
     const nextStatus = needsReview ? "needs_review" : "completed";
 
     functionLogger.info("processDocument", "Updating final document status", {
@@ -527,7 +511,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
         status: nextStatus,
         generatedFileIds: [...(Array.isArray(document.generatedFileIds) ? document.generatedFileIds : []), outputFile.$id],
         extractedDataId: extractedData.$id,
-        confidenceScore: extracted.confidenceScore,
+        confidenceScore: canonicalInvoice.metadata.confidenceScore,
         complianceStatus:
           payload.workflowType === "e_invoice_creator"
             ? needsReview
@@ -622,6 +606,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       documentId: payload.documentId,
       actorUserId,
       provider: provider.name,
+      outputFormat: payload.outputFormat,
     });
 
     return res.json({
@@ -631,6 +616,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       generatedFileId: outputFile.$id,
       status: nextStatus,
       validationIssues,
+      confidenceScore: canonicalInvoice.metadata.confidenceScore,
     });
   } catch (error) {
     logAppwriteOperationError("processDocument.catch", error);

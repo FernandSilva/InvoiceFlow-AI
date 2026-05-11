@@ -6,8 +6,19 @@ import { LoadingState } from "../components/LoadingState";
 import { StatusBadge } from "../components/StatusBadge";
 import { useDocuments } from "../context/DocumentsContext";
 import { appLogger } from "../lib/logger";
-import type { DocumentDetail } from "../types";
-import { formatDate, formatFileSize } from "../utils/format";
+import type { DocumentDetail, NormalizedInvoice } from "../types";
+import { formatCurrency, formatDate, formatFileSize } from "../utils/format";
+
+const isNormalizedInvoice = (value: unknown): value is NormalizedInvoice =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      "metadata" in (value as Record<string, unknown>) &&
+      "supplier" in (value as Record<string, unknown>) &&
+      "buyer" in (value as Record<string, unknown>) &&
+      "invoice" in (value as Record<string, unknown>) &&
+      "lineItems" in (value as Record<string, unknown>),
+  );
 
 export const DocumentDetailPage = () => {
   const { id } = useParams();
@@ -69,6 +80,10 @@ export const DocumentDetailPage = () => {
     );
   }
 
+  const normalizedInvoice = isNormalizedInvoice(detail.extractedData?.normalizedJson)
+    ? detail.extractedData.normalizedJson
+    : undefined;
+
   return (
     <div className="space-y-6">
       <div className="panel p-8">
@@ -107,12 +122,19 @@ export const DocumentDetailPage = () => {
         <div className="panel p-6">
           <h3 className="text-lg font-bold text-slate-900">Generated outputs</h3>
           <div className="mt-4 space-y-3">
-            {detail.outputs.map((output) => (
+            {detail.outputs.length ? detail.outputs.map((output) => (
               <a key={output.id} href={output.downloadUrl} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700">
-                <span>{output.fileName}</span>
+                <div>
+                  <div>{output.fileName}</div>
+                  <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{output.outputFormat}</div>
+                </div>
                 <span className="text-brand-700">Download</span>
               </a>
-            ))}
+            )) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                No generated output file is available for this document yet.
+              </div>
+            )}
           </div>
         </div>
         <div className="panel p-6">
@@ -127,6 +149,37 @@ export const DocumentDetailPage = () => {
           </div>
         </div>
       </div>
+      {normalizedInvoice ? (
+        <div className="panel p-6">
+          <div className="mb-5">
+            <h3 className="text-lg font-bold text-slate-900">Normalized export preview</h3>
+            <p className="mt-1 text-sm text-slate-600">This is the canonical invoice object used to generate every exported format.</p>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="font-semibold text-slate-900">Metadata</div>
+              <div className="mt-3 space-y-2">
+                <div>Generated: {normalizedInvoice.metadata.generatedAt}</div>
+                <div>Workflow: {normalizedInvoice.metadata.workflowType}</div>
+                <div>Format: {normalizedInvoice.metadata.outputFormat}</div>
+                <div>Confidence: {normalizedInvoice.metadata.confidenceScore}</div>
+                <div>Validation Issues: {normalizedInvoice.metadata.validationIssues.length ? normalizedInvoice.metadata.validationIssues.join(" | ") : "None"}</div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="font-semibold text-slate-900">Invoice totals</div>
+              <div className="mt-3 space-y-2">
+                <div>Supplier: {normalizedInvoice.supplier.name || "N/A"}</div>
+                <div>Buyer: {normalizedInvoice.buyer.name || "N/A"}</div>
+                <div>Invoice Number: {normalizedInvoice.invoice.invoiceNumber || "N/A"}</div>
+                <div>Subtotal: {formatCurrency(normalizedInvoice.invoice.subtotal, normalizedInvoice.invoice.currency)}</div>
+                <div>Tax Total: {formatCurrency(normalizedInvoice.invoice.taxTotal, normalizedInvoice.invoice.currency)}</div>
+                <div>Total: {formatCurrency(normalizedInvoice.invoice.total, normalizedInvoice.invoice.currency)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

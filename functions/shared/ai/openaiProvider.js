@@ -145,7 +145,6 @@ const normalizeInvoiceResult = (result) => {
         total: Number(result.total || 0),
         lineItems,
         rawExtractedJson: result,
-        normalizedJson: {},
         validationIssues: result.validationIssues,
         confidenceScore: normalizedConfidenceScore,
         rawNotes: result.rawNotes,

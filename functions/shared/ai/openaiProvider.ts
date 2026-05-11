@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { AIProvider } from "./aiProvider";
 import { functionLogger } from "../logger";
-import type { ExtractedInvoiceResult, NormalizedInvoiceData } from "../types";
+import type { ExtractedInvoiceData, ExtractedInvoiceResult } from "../types";
 
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-nano";
 const OPENAI_TIMEOUT_MS = 20_000;
@@ -102,7 +102,7 @@ const hasRequiredInvoiceFields = (result: ExtractedInvoiceResult) =>
       result.lineItems.length > 0,
   );
 
-const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoiceData => {
+const normalizeInvoiceResult = (result: ExtractedInvoiceResult): ExtractedInvoiceData => {
   const lineItems = result.lineItems.map((item) => {
     const quantity = Number(item.quantity || 0);
     const unitPrice = Number(item.unitPrice || 0);
@@ -158,7 +158,6 @@ const normalizeInvoiceResult = (result: ExtractedInvoiceResult): NormalizedInvoi
     total: Number(result.total || 0),
     lineItems,
     rawExtractedJson: result as unknown as Record<string, unknown>,
-    normalizedJson: {},
     validationIssues: result.validationIssues,
     confidenceScore: normalizedConfidenceScore,
     rawNotes: result.rawNotes,
