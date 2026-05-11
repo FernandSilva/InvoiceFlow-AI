@@ -22,8 +22,8 @@ export const LineItemsTable = ({
         </tr>
       </thead>
       <tbody>
-        {lineItems.map((item) => (
-          <tr key={item.id} className="border-t border-slate-100">
+        {lineItems.map((item, index) => (
+          <tr key={item.id || `${item.description}-${index}`} className="border-t border-slate-100">
             <td className="px-4 py-3">
               {editable ? (
                 <input
