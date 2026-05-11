@@ -27,6 +27,19 @@ const parseJsonString = <T,>(value: string, fallback: T): T => {
   }
 };
 
+function parseJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : value ? [value] : [];
+    } catch {
+      return value ? [value] : [];
+    }
+  }
+  return [];
+}
+
 const mapProfile = (document: any): Profile => ({
   id: document.$id,
   userId: document.userId,
@@ -79,7 +92,7 @@ const mapExtractedData = (document: any): ExtractedData => ({
   lineItems: parseJsonString(document.lineItems, []),
   rawExtractedJson: parseJsonString(document.rawExtractedJson, {}),
   normalizedJson: parseJsonString(document.normalizedJson, {}),
-  validationIssues: Array.isArray(document.validationIssues) ? document.validationIssues : [],
+  validationIssues: parseJsonArray(document.validationIssues),
   createdAt: document.createdAt || document.$createdAt,
   updatedAt: document.updatedAt || document.$updatedAt,
 });

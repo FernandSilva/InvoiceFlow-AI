@@ -52,7 +52,7 @@ Database ID: `69f3813a00274d97c7c5`
 - `lineItems`: string or JSON
 - `rawExtractedJson`: string or JSON
 - `normalizedJson`: string or JSON
-- `validationIssues`: string array
+- `validationIssues`: string storing JSON for MVP, for example `"[]"`
 - `createdAt`: datetime
 - `updatedAt`: datetime
 

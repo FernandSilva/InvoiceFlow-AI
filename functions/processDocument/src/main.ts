@@ -442,11 +442,17 @@ export default async ({ req, res }: { req: any; res: any }) => {
         validationIssues,
       }),
       normalizedJson: JSON.stringify(normalizedInvoice),
-      validationIssues,
+      validationIssues: JSON.stringify(validationIssues || []),
     };
     functionLogger.info("processDocument", "extracted_data payload keys", {
       documentId: payload.documentId,
       keys: Object.keys(extractedDataPayload),
+      fieldTypes: {
+        validationIssues: typeof extractedDataPayload.validationIssues,
+        lineItems: typeof extractedDataPayload.lineItems,
+        rawExtractedJson: typeof extractedDataPayload.rawExtractedJson,
+        normalizedJson: typeof extractedDataPayload.normalizedJson,
+      },
     });
     let extractedData;
     try {
