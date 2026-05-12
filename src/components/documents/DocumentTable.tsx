@@ -33,6 +33,10 @@ export const DocumentTable = ({
               <div className="mt-1 uppercase text-slate-700">{document.requestedOutputFormat}</div>
             </div>
             <div className="rounded-2xl bg-slate-50 p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance</div>
+              <div className="mt-1 capitalize text-slate-700">{document.complianceStatus.replace(/_/g, " ")}</div>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-3">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Created</div>
               <div className="mt-1 text-slate-700">{formatDate(document.createdAt)}</div>
             </div>
@@ -69,6 +73,7 @@ export const DocumentTable = ({
             <th className="px-5 py-4 font-semibold">Status</th>
             <th className="px-5 py-4 font-semibold">Created</th>
             <th className="px-5 py-4 font-semibold">Output</th>
+            <th className="px-5 py-4 font-semibold">Compliance</th>
             <th className="px-5 py-4 font-semibold">Confidence</th>
             <th className="px-5 py-4 font-semibold">Actions</th>
           </tr>
@@ -86,6 +91,7 @@ export const DocumentTable = ({
               </td>
               <td className="px-5 py-4 text-slate-600">{formatDate(document.createdAt)}</td>
               <td className="px-5 py-4 uppercase text-slate-600">{document.requestedOutputFormat}</td>
+              <td className="px-5 py-4 capitalize text-slate-600">{document.complianceStatus.replace(/_/g, " ")}</td>
               <td className="px-5 py-4">
                 <ConfidenceBadge score={document.confidenceScore} />
               </td>

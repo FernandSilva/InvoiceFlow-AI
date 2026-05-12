@@ -3,16 +3,31 @@ import type { ExtractedInvoiceData, NormalizedInvoice } from "./types";
 
 const roundCurrency = (value: number) => Number(Number(value || 0).toFixed(2));
 
+export const generateInvoiceFlowId = (documentId: string, userId: string): string => {
+  const year = new Date().getUTCFullYear();
+  const shortUserId = userId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "USER00";
+  const shortDocumentId = documentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "DOC000";
+  return `IFAI-${year}-${shortUserId}-${shortDocumentId}`;
+};
+
 export const buildCanonicalInvoice = ({
   extracted,
   documentId,
+  sourceFileId,
+  sourceFilename,
   workflowType,
   outputFormat,
+  invoiceFlowId,
+  extractionStatus,
 }: {
   extracted: ExtractedInvoiceData;
   documentId: string;
+  sourceFileId: string;
+  sourceFilename: string;
   workflowType: "invoice_reader" | "e_invoice_creator";
   outputFormat: "json" | "xml" | "xlsx" | "docx" | "pdf";
+  invoiceFlowId?: string;
+  extractionStatus?: "extracted" | "partially_extracted" | "fallback_preserved";
 }): NormalizedInvoice => {
   const generatedAt = new Date().toISOString();
 
@@ -20,10 +35,14 @@ export const buildCanonicalInvoice = ({
     metadata: {
       generatedAt,
       sourceDocumentId: documentId,
+      sourceFileId,
+      sourceFilename,
       workflowType,
       outputFormat,
       confidenceScore: roundCurrency(extracted.confidenceScore),
       validationIssues: extracted.validationIssues,
+      invoiceFlowId,
+      extractionStatus,
     },
     supplier: {
       name: extracted.supplierName,
@@ -56,10 +75,13 @@ export const buildCanonicalInvoice = ({
 
   functionLogger.info("invoiceNormalizer", "Built canonical invoice.", {
     sourceDocumentId: documentId,
+    sourceFilename,
     workflowType,
     outputFormat,
     lineItemCount: invoice.lineItems.length,
     validationIssueCount: invoice.metadata.validationIssues.length,
+    invoiceFlowId,
+    extractionStatus,
   });
 
   return invoice;

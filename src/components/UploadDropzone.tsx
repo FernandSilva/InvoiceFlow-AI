@@ -4,9 +4,11 @@ import { useRef } from "react";
 export const UploadDropzone = ({
   onFileSelected,
   helperText,
+  accept,
 }: {
   onFileSelected: (file: File) => void;
   helperText: string;
+  accept?: string;
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -22,6 +24,7 @@ export const UploadDropzone = ({
       <input
         ref={inputRef}
         type="file"
+        accept={accept}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];

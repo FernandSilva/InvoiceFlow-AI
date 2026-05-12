@@ -49,10 +49,14 @@ export interface NormalizedInvoice {
   metadata: {
     generatedAt: string;
     sourceDocumentId: string;
+    sourceFileId: string;
+    sourceFilename: string;
     workflowType: WorkflowType;
     outputFormat: OutputFormat;
     confidenceScore: number;
     validationIssues: string[];
+    invoiceFlowId?: string;
+    extractionStatus?: "extracted" | "partially_extracted" | "fallback_preserved";
   };
   supplier: {
     name: string;

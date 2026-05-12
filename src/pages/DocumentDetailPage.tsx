@@ -128,7 +128,9 @@ export const DocumentDetailPage = () => {
                   <div>{output.fileName}</div>
                   <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{output.outputFormat}</div>
                 </div>
-                <span className="text-brand-700">Download</span>
+                <span className="text-brand-700">
+                  {detail.document.workflowType === "e_invoice_creator" ? "Download PDF" : "Download"}
+                </span>
               </a>
             )) : (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -162,8 +164,11 @@ export const DocumentDetailPage = () => {
                 <div>Generated: {normalizedInvoice.metadata.generatedAt}</div>
                 <div>Workflow: {normalizedInvoice.metadata.workflowType}</div>
                 <div>Format: {normalizedInvoice.metadata.outputFormat}</div>
+                <div>Source File: {normalizedInvoice.metadata.sourceFilename || "N/A"}</div>
                 <div>Confidence: {normalizedInvoice.metadata.confidenceScore}</div>
                 <div>Validation Issues: {normalizedInvoice.metadata.validationIssues.length ? normalizedInvoice.metadata.validationIssues.join(" | ") : "None"}</div>
+                {normalizedInvoice.metadata.invoiceFlowId ? <div>InvoiceFlow ID: {normalizedInvoice.metadata.invoiceFlowId}</div> : null}
+                {normalizedInvoice.metadata.extractionStatus ? <div>Extraction Status: {normalizedInvoice.metadata.extractionStatus.replace(/_/g, " ")}</div> : null}
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
@@ -175,6 +180,7 @@ export const DocumentDetailPage = () => {
                 <div>Subtotal: {formatCurrency(normalizedInvoice.invoice.subtotal, normalizedInvoice.invoice.currency)}</div>
                 <div>Tax Total: {formatCurrency(normalizedInvoice.invoice.taxTotal, normalizedInvoice.invoice.currency)}</div>
                 <div>Total: {formatCurrency(normalizedInvoice.invoice.total, normalizedInvoice.invoice.currency)}</div>
+                <div>Compliance Status: {detail.document.complianceStatus.replace(/_/g, " ")}</div>
               </div>
             </div>
           </div>
