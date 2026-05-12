@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildCanonicalInvoice = exports.generateInvoiceFlowId = void 0;
+exports.buildInvoiceReaderExport = exports.buildCanonicalInvoice = exports.generateInvoiceFlowId = void 0;
 const logger_1 = require("./logger");
 const roundCurrency = (value) => Number(Number(value || 0).toFixed(2));
 const generateInvoiceFlowId = (documentId, userId) => {
@@ -66,3 +66,40 @@ const buildCanonicalInvoice = ({ extracted, documentId, sourceFileId, sourceFile
     return invoice;
 };
 exports.buildCanonicalInvoice = buildCanonicalInvoice;
+const buildInvoiceReaderExport = (invoice) => {
+    const exportPayload = {
+        supplier: {
+            name: invoice.supplier.name,
+            taxId: invoice.supplier.taxId,
+            address: invoice.supplier.address,
+        },
+        buyer: {
+            name: invoice.buyer.name,
+            taxId: invoice.buyer.taxId,
+            address: invoice.buyer.address,
+        },
+        invoice: {
+            invoiceNumber: invoice.invoice.invoiceNumber,
+            invoiceDate: invoice.invoice.invoiceDate,
+            dueDate: invoice.invoice.dueDate,
+            currency: invoice.invoice.currency,
+            subtotal: invoice.invoice.subtotal,
+            taxTotal: invoice.invoice.taxTotal,
+            total: invoice.invoice.total,
+        },
+        lineItems: invoice.lineItems.map((item) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRate: item.taxRate,
+            total: item.total,
+        })),
+        notes: invoice.notes,
+    };
+    logger_1.functionLogger.debug("invoiceNormalizer", "Built invoice reader export payload.", {
+        lineItemCount: exportPayload.lineItems.length,
+        invoiceNumber: exportPayload.invoice.invoiceNumber,
+    });
+    return exportPayload;
+};
+exports.buildInvoiceReaderExport = buildInvoiceReaderExport;

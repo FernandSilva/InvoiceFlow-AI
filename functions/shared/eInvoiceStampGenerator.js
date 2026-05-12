@@ -1,0 +1,121 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateStampedEInvoicePdf = void 0;
+const pdf_lib_1 = require("pdf-lib");
+const pdfkit_1 = __importDefault(require("pdfkit"));
+const logger_1 = require("./logger");
+const FALLBACK_MARGIN = 48;
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
+const createFallbackPdf = ({ invoiceFlowId, sourceFilename, sourceDocumentId, generatedAt, message, }) => new Promise((resolve, reject) => {
+    const doc = new pdfkit_1.default({ margin: FALLBACK_MARGIN });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+    doc.font("Helvetica-Bold").fontSize(20).text("InvoiceFlow AI - Preservation Record");
+    doc.moveDown(0.5);
+    doc.font("Helvetica").fontSize(11);
+    doc.text(`InvoiceFlow ID: ${invoiceFlowId}`);
+    doc.text(`Generated At: ${generatedAt}`);
+    doc.text(`Source Filename: ${sourceFilename}`);
+    doc.text(`Source Document ID: ${sourceDocumentId}`);
+    doc.moveDown();
+    doc.text(message);
+    doc.end();
+});
+const stampPages = async (pdfBytes, stampText) => {
+    const pdfDoc = await pdf_lib_1.PDFDocument.load(pdfBytes);
+    const font = await pdfDoc.embedFont(pdf_lib_1.StandardFonts.Helvetica);
+    const pages = pdfDoc.getPages();
+    pages.forEach((page, index) => {
+        const { width } = page.getSize();
+        page.drawText(stampText, {
+            x: 36,
+            y: 18,
+            size: 9,
+            font,
+            color: (0, pdf_lib_1.rgb)(0.25, 0.25, 0.25),
+        });
+        page.drawText(`Page ${index + 1}`, {
+            x: width - 72,
+            y: 18,
+            size: 9,
+            font,
+            color: (0, pdf_lib_1.rgb)(0.25, 0.25, 0.25),
+        });
+    });
+    return Buffer.from(await pdfDoc.save());
+};
+const createImagePdf = async (sourceBuffer, sourceMimeType, stampText) => {
+    const pdfDoc = await pdf_lib_1.PDFDocument.create();
+    let embeddedImage;
+    if (sourceMimeType === "image/png") {
+        embeddedImage = await pdfDoc.embedPng(sourceBuffer);
+    }
+    else {
+        embeddedImage = await pdfDoc.embedJpg(sourceBuffer);
+    }
+    const page = pdfDoc.addPage([595.28, 841.89]);
+    const { width, height } = page.getSize();
+    const imageWidth = embeddedImage.width;
+    const imageHeight = embeddedImage.height;
+    const scale = Math.min((width - 72) / imageWidth, (height - 108) / imageHeight);
+    const drawWidth = imageWidth * scale;
+    const drawHeight = imageHeight * scale;
+    const x = (width - drawWidth) / 2;
+    const y = (height - drawHeight) / 2 + 18;
+    const font = await pdfDoc.embedFont(pdf_lib_1.StandardFonts.Helvetica);
+    page.drawImage(embeddedImage, {
+        x,
+        y,
+        width: drawWidth,
+        height: drawHeight,
+    });
+    page.drawText(stampText, {
+        x: 36,
+        y: 18,
+        size: 9,
+        font,
+        color: (0, pdf_lib_1.rgb)(0.25, 0.25, 0.25),
+    });
+    return Buffer.from(await pdfDoc.save());
+};
+const generateStampedEInvoicePdf = async ({ sourceBuffer, sourceMimeType, sourceFilename, documentId, userId, invoiceFlowId, generatedAt, }) => {
+    const stampText = `InvoiceFlow ID: ${invoiceFlowId} • ${generatedAt} • InvoiceFlow AI`;
+    logger_1.functionLogger.info("eInvoiceStampGenerator", "Generating stamped e-invoice PDF.", {
+        sourceFilename,
+        sourceMimeType,
+        documentId,
+        userId,
+        invoiceFlowId,
+    });
+    if (sourceMimeType === "application/pdf") {
+        return {
+            buffer: await stampPages(sourceBuffer, stampText),
+            filename: `e-invoice-record-${invoiceFlowId}.pdf`,
+            mimeType: "application/pdf",
+        };
+    }
+    if (SUPPORTED_IMAGE_MIME_TYPES.has(sourceMimeType)) {
+        return {
+            buffer: await createImagePdf(sourceBuffer, sourceMimeType, stampText),
+            filename: `e-invoice-record-${invoiceFlowId}.pdf`,
+            mimeType: "application/pdf",
+        };
+    }
+    return {
+        buffer: await createFallbackPdf({
+            invoiceFlowId,
+            sourceFilename,
+            sourceDocumentId: documentId,
+            generatedAt,
+            message: "Original document preserved as a reference record. Direct visual stamping was not available for this file type in the current MVP workflow.",
+        }),
+        filename: `e-invoice-record-${invoiceFlowId}.pdf`,
+        mimeType: "application/pdf",
+    };
+};
+exports.generateStampedEInvoicePdf = generateStampedEInvoicePdf;

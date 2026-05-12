@@ -2,12 +2,13 @@ import { AppwriteException, ID, Permission, Role } from "node-appwrite";
 import { buildAuditEvent } from "../../shared/audit";
 import { getAIProvider } from "../../shared/ai/aiProvider";
 import { getAppwriteAdmin, getBackendConfig } from "../../shared/appwriteAdmin";
-import { buildCanonicalInvoice, generateInvoiceFlowId } from "../../shared/invoiceNormalizer";
+import { generateStampedEInvoicePdf } from "../../shared/eInvoiceStampGenerator";
+import { buildCanonicalInvoice, buildInvoiceReaderExport, generateInvoiceFlowId } from "../../shared/invoiceNormalizer";
 import { functionLogger } from "../../shared/logger";
 import { generateOutput } from "../../shared/outputGenerators";
 import { buildOutputFilePath, STORAGE_BUCKET_ID } from "../../shared/storagePaths";
 import { validateInvoiceData } from "../../shared/validation";
-import type { ExtractedInvoiceData, ProcessDocumentPayload } from "../../shared/types";
+import type { ExtractedInvoiceData, GeneratedOutput, NormalizedInvoice, ProcessDocumentPayload } from "../../shared/types";
 
 export default async ({ req, res }: { req: any; res: any }) => {
   const {
@@ -352,21 +353,108 @@ export default async ({ req, res }: { req: any; res: any }) => {
       mimeType: document.originalMimeType,
     });
 
-    const provider = getAIProvider();
-    const invoiceFlowId =
-      payload.workflowType === "e_invoice_creator" ? generateInvoiceFlowId(payload.documentId, document.userId) : undefined;
-    let extractionStatus: "extracted" | "partially_extracted" | "fallback_preserved" | undefined =
-      payload.workflowType === "e_invoice_creator" ? "fallback_preserved" : undefined;
-    let extractionFailureMessage = "";
-    let extracted: ExtractedInvoiceData;
+    const ownerDocumentPermissions = [
+      Permission.read(Role.user(document.userId)),
+      Permission.update(Role.user(document.userId)),
+      Permission.delete(Role.user(document.userId)),
+    ];
 
-    try {
+    const ownerFilePermissions = [
+      Permission.read(Role.user(document.userId)),
+      Permission.update(Role.user(document.userId)),
+      Permission.delete(Role.user(document.userId)),
+    ];
+    const createExtractedDataDocument = async (extractedDataPayload: Record<string, unknown>) => {
+      functionLogger.info("processDocument", "Creating extracted_data", {
+        documentId: payload.documentId,
+        ownerUserId: document.userId,
+      });
+      functionLogger.info("processDocument", "extracted_data payload keys", {
+        documentId: payload.documentId,
+        keys: Object.keys(extractedDataPayload),
+        fieldTypes: {
+          validationIssues: typeof extractedDataPayload.validationIssues,
+          lineItems: typeof extractedDataPayload.lineItems,
+          rawExtractedJson: typeof extractedDataPayload.rawExtractedJson,
+          normalizedJson: typeof extractedDataPayload.normalizedJson,
+        },
+      });
+
+      try {
+        return await admin.databases.createDocument(
+          databaseId,
+          collectionExtractedData,
+          ID.unique(),
+          extractedDataPayload,
+          ownerDocumentPermissions,
+        );
+      } catch (error) {
+        logAppwriteOperationError("databases.createDocument(extracted_data)", error, {
+          documentId: payload.documentId,
+          ownerUserId: document.userId,
+        });
+        if (isBackendApiKeyUnauthorized(error)) {
+          return backendApiKeyUnauthorizedResponse();
+        }
+        throw error;
+      }
+    };
+
+    const uploadOutput = async (output: GeneratedOutput) => {
+      const outputPath = buildOutputFilePath(document.userId, payload.documentId, output.filename);
+      functionLogger.info("processDocument", "Creating output file", {
+        documentId: payload.documentId,
+        outputPath,
+        storageBucketId,
+      });
+      try {
+        const outputFile = await admin.storage.createFile(
+          storageBucketId,
+          ID.unique(),
+          new File([new Uint8Array(output.buffer)], outputPath, { type: output.mimeType }),
+          ownerFilePermissions,
+        );
+        functionLogger.info("processDocument", "Created output file.", {
+          documentId: payload.documentId,
+          outputFileId: outputFile.$id,
+          outputPath,
+          outputFormat: effectiveOutputFormat,
+        });
+        return outputFile;
+      } catch (error) {
+        logAppwriteOperationError("storage.createFile(output)", error, {
+          documentId: payload.documentId,
+          outputPath,
+          storageBucketId,
+        });
+        if (isBackendApiKeyUnauthorized(error)) {
+          return backendApiKeyUnauthorizedResponse();
+        }
+        throw error;
+      }
+    };
+
+    let canonicalInvoice: NormalizedInvoice;
+    let extractedData;
+    let output: GeneratedOutput;
+    let outputFile;
+    let validationIssues: string[] = [];
+    let nextStatus: "completed" | "needs_review";
+    let complianceStatus: "not_applicable" | "draft" | "needs_review" | "ready";
+    let confidenceScore = 0;
+    let invoiceFlowId: string | undefined;
+    let extractionStatus: "extracted" | "partially_extracted" | "fallback_preserved" | undefined;
+    let auditAction: "document.processed" | "e_invoice.created" | "e_invoice.created_with_fallback" = "document.processed";
+    let auditMetadata: Record<string, unknown>;
+
+    if (payload.workflowType === "invoice_reader") {
+      const provider = getAIProvider();
       functionLogger.info("processDocument", "Calling AI provider", {
         provider: provider.name,
         workflowType: payload.workflowType,
         effectiveOutputFormat,
       });
-      extracted = await provider.processDocument({
+      const extracted = await provider.processDocument({
         fileName: document.originalFileName,
         mimeType: document.originalMimeType,
         workflowType: payload.workflowType,
@@ -379,19 +467,81 @@ export default async ({ req, res }: { req: any; res: any }) => {
         confidenceScore: extracted.confidenceScore,
         validationIssueCount: extracted.validationIssues.length,
       });
-    } catch (error) {
-      if (payload.workflowType !== "e_invoice_creator") {
-        throw error;
+
+      const normalizedExtraction = {
+        ...extracted,
+        validationIssues: extracted.validationIssues,
+      };
+
+      canonicalInvoice = buildCanonicalInvoice({
+        extracted: normalizedExtraction,
+        documentId: payload.documentId,
+        workflowType: payload.workflowType,
+        sourceFileId: document.originalFileId,
+        sourceFilename: document.originalFileName,
+        outputFormat: effectiveOutputFormat,
+      });
+
+      validationIssues = [...new Set([...extracted.validationIssues, ...validateInvoiceData(canonicalInvoice, payload.workflowType)])];
+      canonicalInvoice.metadata.validationIssues = validationIssues;
+      confidenceScore = canonicalInvoice.metadata.confidenceScore;
+
+      const extractedDataPayload = {
+        documentId: payload.documentId,
+        userId: document.userId,
+        supplierName: extracted.supplierName,
+        supplierTaxId: extracted.supplierTaxId,
+        supplierAddress: extracted.supplierAddress,
+        buyerName: extracted.buyerName,
+        buyerTaxId: extracted.buyerTaxId,
+        buyerAddress: extracted.buyerAddress,
+        invoiceNumber: extracted.invoiceNumber,
+        invoiceDate: extracted.invoiceDate,
+        dueDate: extracted.dueDate,
+        currency: extracted.currency,
+        subtotal: extracted.subtotal,
+        taxTotal: extracted.taxTotal,
+        total: extracted.total,
+        lineItems: JSON.stringify(normalizedExtraction.lineItems),
+        rawExtractedJson: JSON.stringify(normalizedExtraction.rawExtractedJson || normalizedExtraction),
+        normalizedJson: JSON.stringify(canonicalInvoice),
+        validationIssues: JSON.stringify(validationIssues || []),
+      };
+      extractedData = await createExtractedDataDocument(extractedDataPayload);
+      functionLogger.info("processDocument", "Created extracted_data record.", {
+        documentId: payload.documentId,
+        extractedDataId: extractedData.$id,
+      });
+
+      output = await generateOutput(buildInvoiceReaderExport(canonicalInvoice), effectiveOutputFormat);
+      outputFile = await uploadOutput(output);
+      const needsReview = validationIssues.length > 0 || confidenceScore < 0.75;
+      nextStatus = needsReview ? "needs_review" : "completed";
+      complianceStatus = "not_applicable";
+      auditAction = "document.processed";
+      auditMetadata = { workflowType: payload.workflowType, outputFormat: effectiveOutputFormat, provider: provider.name };
+    } else {
+      invoiceFlowId = generateInvoiceFlowId(payload.documentId, document.userId);
+      const generatedAt = new Date().toISOString();
+      const isDirectlyStampablePdf = document.originalMimeType === "application/pdf";
+      const isDirectlyStampableImage = ["image/jpeg", "image/jpg", "image/png"].includes(document.originalMimeType);
+      const isDocx =
+        document.originalMimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        /\.docx$/i.test(document.originalFileName);
+
+      validationIssues = [];
+      if (!(isDirectlyStampablePdf || isDirectlyStampableImage)) {
+        validationIssues.push(
+          isDocx
+            ? "DOCX preservation fallback used. Direct visual stamping is not supported for this format in the current MVP."
+            : "Direct visual stamping was unavailable for this file type. A preservation PDF record was generated instead.",
+        );
       }
 
-      extractionFailureMessage =
-        error instanceof Error ? error.message : "Structured extraction was unavailable for this source document.";
-      functionLogger.warn("processDocument", "E-Invoice Creator extraction failed; generating fallback PDF.", {
-        documentId: payload.documentId,
-        invoiceFlowId,
-        errorMessage: extractionFailureMessage,
-      });
-      extracted = {
+      extractionStatus = validationIssues.length ? "fallback_preserved" : undefined;
+      confidenceScore = 0;
+
+      const emptyExtraction: ExtractedInvoiceData = {
         supplierName: "",
         supplierTaxId: "",
         supplierAddress: "",
@@ -407,183 +557,88 @@ export default async ({ req, res }: { req: any; res: any }) => {
         total: 0,
         lineItems: [],
         rawExtractedJson: {
-          extractionFailed: true,
-          errorMessage: extractionFailureMessage,
+          preservationMode: true,
+          sourceMimeType: document.originalMimeType,
           sourceFilename: document.originalFileName,
           sourceDocumentId: payload.documentId,
+          invoiceFlowId,
         },
-        validationIssues: [`Structured extraction was unavailable: ${extractionFailureMessage}`],
-        confidenceScore: 0,
-        rawNotes: "Original document preserved. Structured extraction was unavailable.",
+        validationIssues,
+        confidenceScore,
+        rawNotes: "Original document preserved and stamped with an InvoiceFlow ID.",
       };
-    }
 
-    const extractedValidationIssues = [...extracted.validationIssues];
-    let invoiceNumber = extracted.invoiceNumber;
-
-    if (!invoiceNumber && payload.workflowType === "e_invoice_creator") {
-      invoiceNumber = buildFallbackInvoiceNumber(payload.documentId, extracted.invoiceDate || new Date().toISOString());
-      extractedValidationIssues.push("Invoice number missing in source document. Temporary MVP invoice number generated.");
-      functionLogger.warn("processDocument", "Fallback invoice number generated.", {
+      canonicalInvoice = buildCanonicalInvoice({
+        extracted: emptyExtraction,
         documentId: payload.documentId,
-        generatedInvoiceNumber: invoiceNumber,
-      });
-    }
-
-    const normalizedExtraction = {
-      ...extracted,
-      invoiceNumber,
-      validationIssues: extractedValidationIssues,
-    };
-
-    const canonicalInvoice = buildCanonicalInvoice({
-      extracted: normalizedExtraction,
-      documentId: payload.documentId,
-      workflowType: payload.workflowType,
-      sourceFileId: document.originalFileId,
-      sourceFilename: document.originalFileName,
-      outputFormat: effectiveOutputFormat,
-      invoiceFlowId,
-      extractionStatus,
-    });
-
-    const ownerDocumentPermissions = [
-      Permission.read(Role.user(document.userId)),
-      Permission.update(Role.user(document.userId)),
-      Permission.delete(Role.user(document.userId)),
-    ];
-
-    const ownerFilePermissions = [
-      Permission.read(Role.user(document.userId)),
-      Permission.update(Role.user(document.userId)),
-      Permission.delete(Role.user(document.userId)),
-    ];
-
-    const validationIssues = [
-      ...new Set([...extractedValidationIssues, ...validateInvoiceData(canonicalInvoice, payload.workflowType)]),
-    ];
-    canonicalInvoice.metadata.validationIssues = validationIssues;
-    if (payload.workflowType === "e_invoice_creator") {
-      extractionStatus =
-        extractionFailureMessage
-          ? "fallback_preserved"
-          : validationIssues.length > 0 || canonicalInvoice.metadata.confidenceScore < 0.75
-            ? "partially_extracted"
-            : "extracted";
-      canonicalInvoice.metadata.extractionStatus = extractionStatus;
-      canonicalInvoice.metadata.invoiceFlowId = invoiceFlowId;
-    }
-    functionLogger.info("processDocument", "Normalized extraction prepared.", {
-      documentId: payload.documentId,
-      invoiceNumber,
-      confidenceScore: canonicalInvoice.metadata.confidenceScore,
-      validationIssueCount: validationIssues.length,
-      validationIssues,
-      invoiceFlowId,
-      extractionStatus,
-    });
-    functionLogger.info("processDocument", "Creating extracted_data", {
-      documentId: payload.documentId,
-      ownerUserId: document.userId,
-    });
-    const extractedDataPayload = {
-      documentId: payload.documentId,
-      userId: document.userId,
-      supplierName: extracted.supplierName,
-      supplierTaxId: extracted.supplierTaxId,
-      supplierAddress: extracted.supplierAddress,
-      buyerName: extracted.buyerName,
-      buyerTaxId: extracted.buyerTaxId,
-      buyerAddress: extracted.buyerAddress,
-      invoiceNumber,
-      invoiceDate: extracted.invoiceDate,
-      dueDate: extracted.dueDate,
-      currency: extracted.currency,
-      subtotal: extracted.subtotal,
-      taxTotal: extracted.taxTotal,
-      total: extracted.total,
-      lineItems: JSON.stringify(normalizedExtraction.lineItems),
-      rawExtractedJson: JSON.stringify({
-        ...(normalizedExtraction.rawExtractedJson || normalizedExtraction),
+        workflowType: payload.workflowType,
+        sourceFileId: document.originalFileId,
+        sourceFilename: document.originalFileName,
+        outputFormat: "pdf",
         invoiceFlowId,
         extractionStatus,
-      }),
-      normalizedJson: JSON.stringify(canonicalInvoice),
-      validationIssues: JSON.stringify(validationIssues || []),
-    };
-    functionLogger.info("processDocument", "extracted_data payload keys", {
-      documentId: payload.documentId,
-      keys: Object.keys(extractedDataPayload),
-      fieldTypes: {
-        validationIssues: typeof extractedDataPayload.validationIssues,
-        lineItems: typeof extractedDataPayload.lineItems,
-        rawExtractedJson: typeof extractedDataPayload.rawExtractedJson,
-        normalizedJson: typeof extractedDataPayload.normalizedJson,
-      },
-    });
-    let extractedData;
-    try {
-      extractedData = await admin.databases.createDocument(
-        databaseId,
-        collectionExtractedData,
-        ID.unique(),
-        extractedDataPayload,
-        ownerDocumentPermissions,
-      );
-    } catch (error) {
-      logAppwriteOperationError("databases.createDocument(extracted_data)", error, {
-        documentId: payload.documentId,
-        ownerUserId: document.userId,
       });
-      if (isBackendApiKeyUnauthorized(error)) {
-        return backendApiKeyUnauthorizedResponse();
-      }
-      throw error;
-    }
-    functionLogger.info("processDocument", "Created extracted_data record.", {
-      documentId: payload.documentId,
-      extractedDataId: extractedData.$id,
-    });
+      canonicalInvoice.metadata.validationIssues = validationIssues;
+      canonicalInvoice.metadata.invoiceFlowId = invoiceFlowId;
+      canonicalInvoice.metadata.extractionStatus = extractionStatus;
 
-    const output = await generateOutput(canonicalInvoice, effectiveOutputFormat);
-    const outputPath = buildOutputFilePath(
-      document.userId,
-      payload.documentId,
-      output.filename,
-    );
-    functionLogger.info("processDocument", "Creating output file", {
-      documentId: payload.documentId,
-      outputPath,
-      storageBucketId,
-    });
-    let outputFile;
-    try {
-      outputFile = await admin.storage.createFile(
-        storageBucketId,
-        ID.unique(),
-        new File([new Uint8Array(output.buffer)], outputPath, { type: output.mimeType }),
-        ownerFilePermissions,
-      );
-    } catch (error) {
-      logAppwriteOperationError("storage.createFile(output)", error, {
+      const extractedDataPayload = {
         documentId: payload.documentId,
-        outputPath,
-        storageBucketId,
+        userId: document.userId,
+        supplierName: "",
+        supplierTaxId: "",
+        supplierAddress: "",
+        buyerName: "",
+        buyerTaxId: "",
+        buyerAddress: "",
+        invoiceNumber: "",
+        invoiceDate: "",
+        dueDate: "",
+        currency: "",
+        subtotal: 0,
+        taxTotal: 0,
+        total: 0,
+        lineItems: JSON.stringify([]),
+        rawExtractedJson: JSON.stringify({
+          preservationMode: true,
+          sourceMimeType: document.originalMimeType,
+          sourceFilename: document.originalFileName,
+          sourceDocumentId: payload.documentId,
+          invoiceFlowId,
+          validationIssues,
+        }),
+        normalizedJson: JSON.stringify(canonicalInvoice),
+        validationIssues: JSON.stringify(validationIssues),
+      };
+      extractedData = await createExtractedDataDocument(extractedDataPayload);
+      functionLogger.info("processDocument", "Created e-invoice extracted_data record.", {
+        documentId: payload.documentId,
+        extractedDataId: extractedData.$id,
+        invoiceFlowId,
       });
-      if (isBackendApiKeyUnauthorized(error)) {
-        return backendApiKeyUnauthorizedResponse();
-      }
-      throw error;
-    }
-    functionLogger.info("processDocument", "Created output file.", {
-      documentId: payload.documentId,
-      outputFileId: outputFile.$id,
-      outputPath,
-      outputFormat: effectiveOutputFormat,
-    });
 
-    const needsReview = validationIssues.length > 0 || canonicalInvoice.metadata.confidenceScore < 0.75;
-    const nextStatus = payload.workflowType === "e_invoice_creator" ? "completed" : needsReview ? "needs_review" : "completed";
+      output = await generateStampedEInvoicePdf({
+        sourceBuffer: fileBuffer,
+        sourceMimeType: document.originalMimeType,
+        sourceFilename: document.originalFileName,
+        documentId: payload.documentId,
+        userId: document.userId,
+        invoiceFlowId,
+        generatedAt,
+      });
+      outputFile = await uploadOutput(output);
+
+      nextStatus = "completed";
+      complianceStatus = validationIssues.length ? "needs_review" : "ready";
+      auditAction = validationIssues.length ? "e_invoice.created_with_fallback" : "e_invoice.created";
+      auditMetadata = {
+        documentId: payload.documentId,
+        invoiceFlowId,
+        outputFileId: outputFile.$id,
+        extractionStatus: extractionStatus || "stamped_original",
+        confidenceScore,
+      };
+    }
 
     functionLogger.info("processDocument", "Updating final document status", {
       documentId: payload.documentId,
@@ -594,13 +649,8 @@ export default async ({ req, res }: { req: any; res: any }) => {
         status: nextStatus,
         generatedFileIds: [...(Array.isArray(document.generatedFileIds) ? document.generatedFileIds : []), outputFile.$id],
         extractedDataId: extractedData.$id,
-        confidenceScore: canonicalInvoice.metadata.confidenceScore,
-        complianceStatus:
-          payload.workflowType === "e_invoice_creator"
-            ? needsReview
-              ? "needs_review"
-              : "ready"
-            : "not_applicable",
+        confidenceScore,
+        complianceStatus,
         requestedOutputFormat: effectiveOutputFormat,
         errorMessage: validationIssues.length ? validationIssues.join(" | ") : "",
         updatedAt: new Date().toISOString(),
@@ -622,12 +672,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
     functionLogger.info("processDocument", "Updated document record after processing.", {
       documentId: payload.documentId,
       nextStatus,
-      complianceStatus:
-        payload.workflowType === "e_invoice_creator"
-          ? needsReview
-            ? "needs_review"
-            : "ready"
-          : "not_applicable",
+      complianceStatus,
       generatedFileId: outputFile.$id,
       extractedDataId: extractedData.$id,
     });
@@ -668,25 +713,10 @@ export default async ({ req, res }: { req: any; res: any }) => {
         buildAuditEvent({
           actorUserId,
           targetUserId: document.userId,
-          action:
-            payload.workflowType === "e_invoice_creator"
-              ? extractionStatus === "fallback_preserved"
-                ? "e_invoice.created_with_fallback"
-                : "e_invoice.created"
-              : "document.processed",
+          action: auditAction,
           entityType: "document",
           entityId: payload.documentId,
-          metadata:
-            payload.workflowType === "e_invoice_creator"
-              ? {
-                  documentId: payload.documentId,
-                  invoiceFlowId,
-                  outputFileId: outputFile.$id,
-                  extractionStatus,
-                  confidenceScore: canonicalInvoice.metadata.confidenceScore,
-                  provider: provider.name,
-                }
-              : { workflowType: payload.workflowType, outputFormat: effectiveOutputFormat, provider: provider.name },
+          metadata: auditMetadata,
           ipAddress,
         }),
         ownerDocumentPermissions,
@@ -704,10 +734,10 @@ export default async ({ req, res }: { req: any; res: any }) => {
     functionLogger.info("processDocument", "Created success audit log.", {
       documentId: payload.documentId,
       actorUserId,
-      provider: provider.name,
       outputFormat: effectiveOutputFormat,
       invoiceFlowId,
       extractionStatus,
+      auditAction,
     });
 
     return res.json({
@@ -717,7 +747,7 @@ export default async ({ req, res }: { req: any; res: any }) => {
       generatedFileId: outputFile.$id,
       status: nextStatus,
       validationIssues,
-      confidenceScore: canonicalInvoice.metadata.confidenceScore,
+      confidenceScore,
       outputFormat: effectiveOutputFormat,
       invoiceFlowId,
       extractionStatus,

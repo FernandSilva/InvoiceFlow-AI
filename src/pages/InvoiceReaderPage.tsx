@@ -21,7 +21,7 @@ export const InvoiceReaderPage = () => {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-950">Invoice Reader & Converter</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              Upload invoices or business documents, extract the fields through the backend processor, then review and export the structured result.
+              Upload invoices or business documents, extract structured invoice data, then review and export clean normalized outputs.
             </p>
           </div>
           <StatusBadge status={stage} />
@@ -54,7 +54,7 @@ export const InvoiceReaderPage = () => {
               <textarea className="input-base min-h-32" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional routing notes for a future backend processor." />
             </label>
             <p className="mt-4 text-xs leading-6 text-slate-500">
-              Uploaded files are stored in Appwrite, processed by the backend function, and returned as structured outputs for review and export.
+              Uploaded files are stored in Appwrite, processed by the backend function, and returned as structured exports for review and download.
             </p>
           </div>
         </div>

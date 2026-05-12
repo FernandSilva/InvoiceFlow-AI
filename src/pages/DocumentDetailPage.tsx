@@ -83,6 +83,7 @@ export const DocumentDetailPage = () => {
   const normalizedInvoice = isNormalizedInvoice(detail.extractedData?.normalizedJson)
     ? detail.extractedData.normalizedJson
     : undefined;
+  const isEInvoiceCreator = detail.document.workflowType === "e_invoice_creator";
 
   return (
     <div className="space-y-6">
@@ -105,13 +106,25 @@ export const DocumentDetailPage = () => {
           </button>
         </div>
       </div>
-      {detail.extractedData ? (
+      {detail.extractedData && !isEInvoiceCreator ? (
         <ExtractedInvoicePreview
           data={detail.extractedData}
           confidence={detail.document.confidenceScore}
           editable
           onUpdate={(updates) => void updateExtractedData(detail.extractedData!.id, { ...detail.extractedData, ...updates })}
         />
+      ) : isEInvoiceCreator ? (
+        <div className="panel p-6">
+          <h3 className="text-lg font-bold text-slate-900">Stamped preservation record</h3>
+          <p className="mt-2 text-sm text-slate-600">
+            E-Invoice Creator preserves the uploaded document and adds a minimal InvoiceFlow stamp. It does not rebuild the invoice layout or show a structured reconstruction preview.
+          </p>
+          <div className="mt-5 space-y-2 text-sm text-slate-700">
+            <div>Output type: PDF</div>
+            <div>Compliance status: {detail.document.complianceStatus.replace(/_/g, " ")}</div>
+            {normalizedInvoice?.metadata?.invoiceFlowId ? <div>InvoiceFlow ID: {normalizedInvoice.metadata.invoiceFlowId}</div> : null}
+          </div>
+        </div>
       ) : (
         <ErrorState
           title="Extracted data unavailable"
@@ -128,9 +141,7 @@ export const DocumentDetailPage = () => {
                   <div>{output.fileName}</div>
                   <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{output.outputFormat}</div>
                 </div>
-                <span className="text-brand-700">
-                  {detail.document.workflowType === "e_invoice_creator" ? "Download PDF" : "Download"}
-                </span>
+                <span className="text-brand-700">{isEInvoiceCreator ? "Download stamped PDF" : "Download"}</span>
               </a>
             )) : (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -154,8 +165,12 @@ export const DocumentDetailPage = () => {
       {normalizedInvoice ? (
         <div className="panel p-6">
           <div className="mb-5">
-            <h3 className="text-lg font-bold text-slate-900">Normalized export preview</h3>
-            <p className="mt-1 text-sm text-slate-600">This is the canonical invoice object used to generate every exported format.</p>
+            <h3 className="text-lg font-bold text-slate-900">{isEInvoiceCreator ? "Internal preservation metadata" : "Normalized export preview"}</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {isEInvoiceCreator
+                ? "This internal record stores the preservation metadata used to manage the stamped PDF."
+                : "This is the canonical invoice object used internally to generate the structured exports."}
+            </p>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">

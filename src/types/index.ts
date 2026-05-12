@@ -87,6 +87,36 @@ export interface NormalizedInvoice {
   notes: string;
 }
 
+export interface InvoiceReaderExport {
+  supplier: {
+    name: string;
+    taxId: string;
+    address: string;
+  };
+  buyer: {
+    name: string;
+    taxId: string;
+    address: string;
+  };
+  invoice: {
+    invoiceNumber: string;
+    invoiceDate: string;
+    dueDate: string;
+    currency: string;
+    subtotal: number;
+    taxTotal: number;
+    total: number;
+  };
+  lineItems: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    taxRate: number;
+    total: number;
+  }>;
+  notes: string;
+}
+
 export interface ExtractedData {
   id: string;
   documentId: string;
